@@ -50,6 +50,48 @@ Panel {
   property int phraseIndex: 0
   property real pulse: 1.0
 
+  // A control row where ONLY the switch is clickable (unlike the stock Toggle,
+  // which makes the whole row a hit target). Label + optional sub-label on the
+  // left, a ToggleSwitch on the right.
+  component SwitchRow: Item {
+    id: sr
+    property string label: ""
+    property string sub: ""
+    property bool value: false
+    property color fg: "white"
+    property string fam: Style.font.family
+    signal switched()
+    width: parent ? parent.width : Style.space(300)
+    implicitHeight: Math.max(labelCol.implicitHeight, sw.implicitHeight) + Style.space(12)
+    Column {
+      id: labelCol
+      anchors.left: parent.left
+      anchors.verticalCenter: parent.verticalCenter
+      spacing: Style.space(2)
+      Text {
+        text: sr.label
+        color: sr.fg
+        font.family: sr.fam
+        font.pixelSize: Style.font.subtitle
+      }
+      Text {
+        text: sr.sub
+        visible: sr.sub !== ""
+        color: Qt.darker(sr.fg, 1.4)
+        font.family: sr.fam
+        font.pixelSize: Style.font.caption
+      }
+    }
+    ToggleSwitch {
+      id: sw
+      anchors.right: parent.right
+      anchors.verticalCenter: parent.verticalCenter
+      checked: sr.value
+      foreground: sr.fg
+      onToggled: sr.switched()
+    }
+  }
+
   // Report the bar-slot size from the icon button, or the bar collapses this
   // widget to zero width and nothing shows (mirrors omarchy.power).
   implicitWidth: button.implicitWidth
@@ -76,7 +118,7 @@ Panel {
   Component.onCompleted: refreshPower()
 
   Timer { interval: 8000; running: true; repeat: true; onTriggered: root.refreshPower() }
-  Timer { id: afterAction; interval: 500; onTriggered: { root.refreshStatus(); root.refreshPower() } }
+  Timer { id: afterAction; interval: 700; onTriggered: { root.refreshStatus(); root.refreshPower() } }
   // Rotate the tagline only while the popup is open.
   Timer {
     interval: 3200
@@ -110,7 +152,11 @@ Panel {
       onStreamFinished: {
         try {
           var j = JSON.parse(text)
-          root.asleep = j.asleep === true
+          // NB: we deliberately do NOT reconcile `asleep` from the readback.
+          // Reading the sleep bit means opening the device, which disturbs the
+          // very state we're reading, so it's unreliable — the Awake switch is
+          // driven optimistically from the user's action instead. The other
+          // fields are reliable (unaffected by the read).
           root.tracking = String(j.tracking || "off")
           root.autoWb = j.auto_wb === true
           root.wbTemp = j.wb_temp | 0
@@ -235,35 +281,55 @@ Panel {
 
         PanelSeparator { foreground: root.fg }
 
-        Toggle {
+        // Optimistic switches: flip the local state on click for instant
+        // feedback, then send the command. Sleep uses explicit sleep/wake
+        // (not toggle) so its direction never depends on an unreliable readback.
+        SwitchRow {
           width: parent.width
           label: "Awake"
-          description: root.asleep ? "camera asleep" : ""
-          checked: !root.asleep
-          foreground: root.fg
-          onClicked: root.act(["toggle"])
+          sub: root.asleep ? "camera asleep" : ""
+          value: !root.asleep
+          fg: root.fg
+          fam: root.bar ? root.bar.fontFamily : Style.font.family
+          onSwitched: {
+            if (root.asleep) { root.asleep = false; root.act(["wake"]) }
+            else { root.asleep = true; root.act(["sleep"]) }
+          }
         }
-        Toggle {
+        SwitchRow {
           width: parent.width
           label: "AI tracking"
-          checked: root.tracking !== "off"
-          foreground: root.fg
-          onClicked: root.act(["track", "toggle"])
+          value: root.tracking !== "off"
+          fg: root.fg
+          fam: root.bar ? root.bar.fontFamily : Style.font.family
+          onSwitched: {
+            var on = root.tracking === "off"
+            root.tracking = on ? "normal" : "off"
+            root.act(["track", on ? "on" : "off"])
+          }
         }
-        Toggle {
+        SwitchRow {
           width: parent.width
           label: "HDR"
-          checked: root.hdr
-          foreground: root.fg
-          onClicked: root.act(["hdr", root.hdr ? "off" : "on"])
+          value: root.hdr
+          fg: root.fg
+          fam: root.bar ? root.bar.fontFamily : Style.font.family
+          onSwitched: {
+            root.hdr = !root.hdr
+            root.act(["hdr", root.hdr ? "on" : "off"])
+          }
         }
-        Toggle {
+        SwitchRow {
           width: parent.width
           label: "Auto white balance"
-          description: root.autoWb ? "" : ("pinned " + root.wbTemp + "K")
-          checked: root.autoWb
-          foreground: root.fg
-          onClicked: root.act(["wb", root.autoWb ? "pin" : "auto"])
+          sub: root.autoWb ? "" : ("pinned " + root.wbTemp + "K")
+          value: root.autoWb
+          fg: root.fg
+          fam: root.bar ? root.bar.fontFamily : Style.font.family
+          onSwitched: {
+            root.autoWb = !root.autoWb
+            root.act(["wb", root.autoWb ? "auto" : "pin"])
+          }
         }
 
         PanelSeparator { foreground: root.fg }

@@ -14,6 +14,11 @@ documented in [`PROTOCOL.md`](PROTOCOL.md).
 > **The #1 missing feature on Linux — a real camera sleep — works here.** No more
 > lingering LED and live gimbal when nothing is using the camera.
 
+<p align="center">
+  <img src="docs/widget.png" alt="OBSBOT Tiny 3 Omarchy bar widget" width="360">
+  <br><em>The Omarchy bar widget: sleep/wake, AI tracking, HDR, white balance, a preview-resolution picker, and a live preview.</em>
+</p>
+
 ## Features
 
 | Feature | `t3ctl` | Notes |
