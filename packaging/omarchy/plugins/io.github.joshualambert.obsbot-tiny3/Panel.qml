@@ -15,8 +15,8 @@ import qs.Ui
 // and releases the camera the moment it is closed.
 Panel {
   id: root
-  moduleName: "obsbot.tiny3"
-  ipcTarget: "obsbot.tiny3"
+  moduleName: "io.github.joshualambert.obsbot-tiny3"
+  ipcTarget: "io.github.joshualambert.obsbot-tiny3"
   manageIpc: false
 
   // Cheap, non-invasive (sysfs) — drives the bar icon dimming.
