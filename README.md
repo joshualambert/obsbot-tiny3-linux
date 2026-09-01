@@ -145,7 +145,7 @@ wb_temp = 4000
   - `SUPER + ALT + R` — recenter gimbal
   - `SUPER + ALT + T` — tracking toggle
 - **Menu** — merge [`packaging/omarchy-menu.jsonc`](packaging/omarchy-menu.jsonc)
-  into `~/.config/omarchy/extensions/omarchy-menu.jsonc` for a **Camera** submenu.
+  into `~/.config/omarchy/extensions/omarchy-menu.jsonc` for a **Camera** submenu (under the **Trigger** menu).
 - **systemd** — [`packaging/systemd/t3-wb-guard.service`](packaging/systemd/t3-wb-guard.service)
   is a hardened per-user unit.
 

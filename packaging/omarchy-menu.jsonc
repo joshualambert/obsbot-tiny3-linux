@@ -2,13 +2,13 @@
   // OBSBOT Tiny 3 camera control, for the Quickshell Omarchy menu.
   // Merge these entries into ~/.config/omarchy/extensions/omarchy-menu.jsonc
   // (keep a single top-level object). Hot-reloads on save.
-  "camera": {"icon":"󰖠","label":"Camera"},
-  "camera.status":    {"icon":"","label":"Status","action":"omarchy-launch-or-focus-tui \"zsh -c 't3ctl status; read -k 1'\""},
-  "camera.sleep":     {"icon":"󰒲","label":"Sleep","action":"t3ctl sleep"},
-  "camera.wake":      {"icon":"󰖨","label":"Wake","action":"t3ctl wake"},
-  "camera.recenter":  {"icon":"󰑨","label":"Recenter gimbal","action":"t3ctl recenter"},
-  "camera.track_on":  {"icon":"󰛐","label":"Tracking on","action":"t3ctl track on"},
-  "camera.track_off": {"icon":"󰛑","label":"Tracking off","action":"t3ctl track off"},
-  "camera.wb_pin":    {"icon":"󰔎","label":"Pin white balance","action":"t3ctl wb pin"},
-  "camera.wb_auto":   {"icon":"󰖙","label":"Auto white balance","action":"t3ctl wb auto"},
+  "trigger.camera": {"icon":"󰖠","label":"Camera"},
+  "trigger.camera.status":    {"icon":"","label":"Status","action":"omarchy-launch-or-focus-tui \"zsh -c 't3ctl status; read -k 1'\""},
+  "trigger.camera.sleep":     {"icon":"󰒲","label":"Sleep","action":"t3ctl sleep"},
+  "trigger.camera.wake":      {"icon":"󰖨","label":"Wake","action":"t3ctl wake"},
+  "trigger.camera.recenter":  {"icon":"󰑨","label":"Recenter gimbal","action":"t3ctl recenter"},
+  "trigger.camera.track_on":  {"icon":"󰛐","label":"Tracking on","action":"t3ctl track on"},
+  "trigger.camera.track_off": {"icon":"󰛑","label":"Tracking off","action":"t3ctl track off"},
+  "trigger.camera.wb_pin":    {"icon":"󰔎","label":"Pin white balance","action":"t3ctl wb pin"},
+  "trigger.camera.wb_auto":   {"icon":"󰖙","label":"Auto white balance","action":"t3ctl wb auto"},
 }
