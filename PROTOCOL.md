@@ -46,25 +46,97 @@ bmControls       = ff ff 3f 00   → control bits 0..21 set (selectors 1..22 can
 
 Read-only probe results (GET_LEN / GET_INFO / GET_CUR via `UVCIOC_CTRL_QUERY`,
 2026-08-31, fw 0510): **selectors 1–22 all exist, all report length 60 bytes,
-all report caps 0x03 (GET+SET)**; selectors ≥23 return ENOENT. The uniform
-60-byte size suggests a generic vendor message pipe rather than per-feature
-controls. Non-zero GET_CUR payloads observed while idle (leading bytes,
-rest zero-padded to 60):
+all report caps 0x03 (GET+SET)**; selectors ≥23 return ENOENT.
 
-| Selector | Leading bytes (hex) | Notes |
+This XU is the **same one the OBSBOT Tiny 2 uses** (bUnitID 2, GUID
+`9A1E7291-6843-4683-6D92-39BC7906EE49`, 19 controls). The GUID is not exposed
+by cached sysfs on this unit but the vendor protocol below is confirmed
+byte-compatible, so the Tiny 3 Lite speaks the Tiny 2 wire protocol. Two
+selectors carry everything:
+
+| Selector | Role | Confirmed on Tiny 3 Lite |
 |---|---|---|
-| 3 | `01` | |
-| 4 | `01` | |
-| 6 | `2e01000200000001000178000001010000000000017f2100020043000000001e00031000000000000800000a0301 01` | rich blob — device status/version? |
-| 7 | `06` | |
-| 9 | `01` | |
-| 10 | `0101` | |
-| 14 | `3ea00600` | u32 LE = 434238? |
-| others | all zeros | |
+| `0x02` | Framed **V3** command channel + reply mailbox | ✅ yes |
+| `0x06` | 60-byte status block; also raw-TLV write target (AI/HDR/exposure/FOV) | ✅ yes |
 
-Semantics not yet decoded. This XU is the prime suspect for sleep/wake, AI
-tracking, and gimbal preset commands (Tiny4Linux drives the Tiny 2 via a
-UVC XU). No SET_CUR has been issued yet.
+## The framed V3 protocol (selector 0x02) — CONFIRMED on Tiny 3 Lite
+
+60-byte frame, zero-padded, little-endian throughout:
+
+```
+off 0    : 0xAA                     magic
+off 1    : FLAGS   0x25 = SET (with nested payload) · 0x01 = header-only GET
+off 2-3  : seq     u16   (reply echoes it back — match on this)
+off 4-5  : len     u16 = 0x000C     (bytes 0..11 are covered by the header token)
+off 6-7  : token   u16   CRC-16/USB over bytes[0:6]+00 00+bytes[8:12]
+off 8    : sender  = 0x0A            (host)
+off 9    : receiver                  (subsystem id: 0x02 camera, 0x03 gimbal, 0x04 AI, 0x0D upgrade)
+off 10-11: cmd     u16   wire command id
+--- nested payload segment, present only when there is a payload ---
+off 12-13: len2    u16   payload length
+off 14-15: token2  u16   CRC-16/USB over bytes[12:14]+00 00+payload
+off 16.. : payload
+```
+
+**CRC-16/USB**: poly `0xA001` (reflected 0x8005), init `0xFFFF`, refin=refout=true,
+xorout `0xFFFF`. Validated against nine Tiny4Linux known-good frames AND live
+against this device.
+
+**Flags byte is the key to readback.** SETs use `0x25`; **GETs must use `0x01`**
+or the device returns zeros. This was verified live: `UG_GET_SN` framed with
+`0x01` returned the real 14-char serial; the reply came back with flags `0x29`,
+sender/receiver swapped.
+
+**Reply mailbox rules** (all confirmed live): `SET_CUR` the request frame to
+selector `0x02`, then `GET_CUR` selector `0x02` and parse. The mailbox retains
+the previous reply, so **validate that reply seq AND cmd match the request**;
+poll ~6–12× at 50 ms because reply latency exceeds a fixed sleep. GETs are
+answered; **SET commands (sleep/wake/recenter) are fire-and-forget and return
+no mailbox reply** — verify their effect by the status block or by behaviour,
+never by a reply.
+
+### Confirmed commands (live on this Tiny 3 Lite unit)
+
+| Feature | flags | cmd | receiver | payload | Result |
+|---|---|---|---|---|---|
+| Get serial number | `0x01` | `0x18C8` | `0x0D` | — | ✅ `RMOWUHI3111PLN` (14 ASCII) |
+| Get UUID | `0x01` | `0x1808` | `0x0D` | — | ✅ 24 bytes |
+| Sleep | `0x25` | `0xA0C2` | `0x02` | `01 00 00 00` | ⏳ sent, LED verify pending |
+| Wake | `0x25` | `0xA0C2` | `0x02` | `00 00 00 00` | ⏳ sent, LED verify pending |
+| Gimbal recenter | `0x25` | `0x00C3` | `0x03` | `00 00 00 00 00 00` | ✅ centered (frame-verified) |
+
+Byte order note: `cmd` bytes on the wire are little-endian, e.g. sleep = `C2 A0`.
+
+### Raw-TLV commands (selector 0x06) — CONFIRMED
+
+Distinct from framed V3: write a raw `[tag][len][value…]` zero-padded to 60
+bytes directly to selector `0x06` (no magic, no CRC). Effect shows in the
+status block.
+
+| Tag | Control | Value | Result |
+|---|---|---|---|
+| `0x16` | AI tracking | `[enable][framing]`: enable `0x02` on / `0x00` off; framing 0=normal 1=upper-body 2=close-up 3=headless 4=lower-body | ✅ `16 02 02 00` enabled tracking; status byte `0x18` → `02`, frame showed re-framing |
+| `0x01` | HDR / WDR | `0`/`1` | not yet tested |
+| `0x03` | face-priority AE | `0` global / `1` face (needs auto-exposure on) | not yet tested |
+| `0x04` | field of view | `0` wide 86° · `1` med 78° · `2` narrow 65° | not yet tested |
+
+### Status block (selector 0x06 GET_CUR) decode
+
+Live blob observed: `2e0100020000000100 01 78 0000 01 01 …`. Decoded offsets
+(from Tiny4Linux status.rs, confirmed reacting on this unit):
+
+| Offset | Field | Observed |
+|---|---|---|
+| `0x02` | sleep (0=awake, 1=sleep) | `00` awake |
+| `0x06` | HDR (bool) | `00` |
+| `0x18` | AI mode enable | `00` idle → `02` when tracking on |
+| `0x1c` | AI framing | `00` |
+| `0x21` | tracking speed (0=std, 2=sport) | `00` |
+
+**Verification catch-22:** the sleep byte can only be read by opening the video
+node, which itself may wake the camera. So the status block is **not** a
+reliable sleep indicator — the physical LED / gimbal park is the ground truth
+(see Probe log).
 
 ## Standard UVC controls (verified via `v4l2-ctl --list-ctrls-menus`)
 
@@ -153,3 +225,8 @@ in such a room. Keep target temperature configurable.
 | 2026-08-31 | Parse sysfs descriptors (no device open) | Found XU bUnitID=2 GUID `9a1e7291-6843-4683-6d92-39bc7906ee49`, 22 selector candidates; CDC ACM pair at if 4+5 |
 | 2026-08-31 | MJPG 1080p capture while idle | Wakes device (`runtime_status` → `active`), re-suspends ~2 s after close |
 | 2026-08-31 | XU GET_LEN/GET_INFO/GET_CUR sweep, selectors 1–32 | 1–22 exist, uniform 60-byte length, all GET+SET; ≥23 ENOENT; non-zero payloads on 3,4,6,7,9,10,14 |
+| 2026-08-31 | Framed V3 `UG_GET_SN` (flags 0x01) | ✅ reply flags 0x29, serial `RMOWUHI3111PLN` — confirms Tiny 2 V3 protocol + CRC-16/USB work on Tiny 3 Lite |
+| 2026-08-31 | AI tracking on `16 02 02 00` → selector 6 | ✅ status byte 0x18 → 02; captured frame showed gimbal re-framing on subject |
+| 2026-08-31 | AI tracking off `16 02 00 00` | ✅ status byte 0x18 → 00 |
+| 2026-08-31 | Gimbal recenter cmd 0xC300 receiver 0x03 | ✅ frame-verified return to centered view |
+| 2026-08-31 | Sleep/wake cmd 0xA0C2 receiver 0x02 | frames accepted (no reply, expected); LED-level verification pending |
