@@ -58,7 +58,9 @@ impl VideoFd {
             Error::Usage(format!("bad device path: {path}"))
         })?;
         // O_RDWR is required for control ioctls; no O_NONBLOCK needed.
-        let fd = unsafe { libc::open(c.as_ptr(), libc::O_RDWR) };
+        // O_CLOEXEC so this fd — whose mere existence keeps the camera awake —
+        // never leaks into a child process.
+        let fd = unsafe { libc::open(c.as_ptr(), libc::O_RDWR | libc::O_CLOEXEC) };
         if fd < 0 {
             return Err(Error::Io(std::io::Error::last_os_error()));
         }
@@ -68,16 +70,18 @@ impl VideoFd {
     /// UVC XU query on `unit`/`selector`. `buf` is both the out-buffer for
     /// GETs and the payload for SETs; its length is the wLength.
     pub fn xu(&self, unit: u8, selector: u8, query: u8, buf: &mut [u8]) -> Result<()> {
+        let size = u16::try_from(buf.len())
+            .map_err(|_| Error::Usage(format!("XU buffer too large: {} bytes", buf.len())))?;
         let mut q = UvcXuControlQuery {
             unit,
             selector,
             query,
             _pad: 0,
-            size: buf.len() as u16,
+            size,
             _pad2: 0,
             data: buf.as_mut_ptr(),
         };
-        let r = unsafe { libc::ioctl(self.fd, UVCIOC_CTRL_QUERY, &mut q) };
+        let r = unsafe { libc::ioctl(self.fd, UVCIOC_CTRL_QUERY as _, &mut q) };
         if r < 0 {
             return Err(Error::Io(std::io::Error::last_os_error()));
         }
@@ -93,6 +97,9 @@ impl VideoFd {
 
     /// SET_CUR a (<=60 byte) payload to an XU selector, zero-padded to 60.
     pub fn xu_set(&self, unit: u8, selector: u8, data: &[u8]) -> Result<()> {
+        if data.len() > 60 {
+            return Err(Error::Usage(format!("XU payload {} bytes exceeds 60", data.len())));
+        }
         let mut buf = [0u8; 60];
         buf[..data.len()].copy_from_slice(data);
         self.xu(unit, selector, UVC_SET_CUR, &mut buf)
@@ -101,7 +108,7 @@ impl VideoFd {
     /// VIDIOC_G_CTRL — read a standard V4L2 control by CID.
     pub fn get_ctrl(&self, id: u32) -> Result<i32> {
         let mut c = V4l2Control { id, value: 0 };
-        let r = unsafe { libc::ioctl(self.fd, VIDIOC_G_CTRL, &mut c) };
+        let r = unsafe { libc::ioctl(self.fd, VIDIOC_G_CTRL as _, &mut c) };
         if r < 0 {
             return Err(Error::Io(std::io::Error::last_os_error()));
         }
@@ -114,7 +121,7 @@ impl VideoFd {
     /// control written becomes the active source (see `controls::pin_white_balance`).
     pub fn set_ctrl(&self, id: u32, value: i32) -> Result<()> {
         let mut c = V4l2Control { id, value };
-        let r = unsafe { libc::ioctl(self.fd, VIDIOC_S_CTRL, &mut c) };
+        let r = unsafe { libc::ioctl(self.fd, VIDIOC_S_CTRL as _, &mut c) };
         if r < 0 {
             return Err(Error::Io(std::io::Error::last_os_error()));
         }

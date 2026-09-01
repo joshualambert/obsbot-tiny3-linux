@@ -27,10 +27,21 @@ pub const FLAG_SET: u8 = 0x25;
 pub const FLAG_GET: u8 = 0x01;
 pub const SENDER_HOST: u8 = 0x0A;
 pub const FRAME_LEN: usize = 60;
+/// Max payload that fits after the 16-byte header+nested-segment prefix.
+pub const MAX_PAYLOAD: usize = FRAME_LEN - 16; // 44
 const HEADER_COVERED: u16 = 0x000C;
 
 /// Build a 60-byte V3 frame ready to write to XU selector 0x02.
+///
+/// Panics if `payload` exceeds [`MAX_PAYLOAD`] (44) — a programmer error, since
+/// payloads are fixed protocol constants, never user input. Every command in
+/// this crate is well under the limit.
 pub fn build(flags: u8, seq: u16, receiver: u8, cmd: u16, payload: &[u8]) -> [u8; FRAME_LEN] {
+    assert!(
+        payload.len() <= MAX_PAYLOAD,
+        "V3 payload is {} bytes, max {MAX_PAYLOAD}",
+        payload.len()
+    );
     let mut f = [0u8; FRAME_LEN];
     f[0] = MAGIC;
     f[1] = flags;
@@ -100,16 +111,24 @@ pub fn parse(raw: &[u8]) -> Option<Reply> {
     };
     if raw.len() >= 16 {
         let len2 = u16::from_le_bytes([raw[12], raw[13]]) as usize;
-        // A 60-byte frame with payload at offset 16 can carry at most 44 bytes.
-        if len2 > 0 && 16 + len2 <= raw.len() && len2 <= 44 {
+        if len2 > 0 {
+            // A payload is claimed: it must fit (<=44, offset 16) and its CRC
+            // must check out. If not, reject the WHOLE frame (return None)
+            // rather than quietly yielding an empty payload — a caller polling
+            // the mailbox should keep waiting for a valid reply, not accept a
+            // corrupt one as if it had no data.
+            if 16 + len2 > raw.len() || len2 > MAX_PAYLOAD {
+                return None;
+            }
             let token2 = u16::from_le_bytes([raw[14], raw[15]]);
             let mut ncov = Vec::with_capacity(4 + len2);
             ncov.extend_from_slice(&raw[12..14]);
             ncov.extend_from_slice(&[0, 0]);
             ncov.extend_from_slice(&raw[16..16 + len2]);
-            if crc16_usb(&ncov) == token2 {
-                reply.payload = raw[16..16 + len2].to_vec();
+            if crc16_usb(&ncov) != token2 {
+                return None;
             }
+            reply.payload = raw[16..16 + len2].to_vec();
         }
     }
     Some(reply)

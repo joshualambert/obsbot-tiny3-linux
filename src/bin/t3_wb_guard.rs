@@ -43,9 +43,19 @@ fn main() {
     let mut args = std::env::args().skip(1);
     while let Some(a) = args.next() {
         match a.as_str() {
-            "--temp" | "-t" => {
-                temp = args.next().and_then(|s| s.parse().ok()).unwrap_or(temp);
-            }
+            "--temp" | "-t" => match args.next() {
+                Some(s) => match s.parse() {
+                    Ok(v) => temp = v,
+                    Err(_) => {
+                        eprintln!("t3-wb-guard: invalid --temp value '{s}' (expected Kelvin integer)");
+                        std::process::exit(2);
+                    }
+                },
+                None => {
+                    eprintln!("t3-wb-guard: --temp requires a value");
+                    std::process::exit(2);
+                }
+            },
             "--device" | "-d" => device_override = args.next(),
             "--once" => once = true,
             "-h" | "--help" => {
@@ -71,10 +81,12 @@ fn main() {
     log(&format!("starting; target white balance {temp}K"));
 
     if once {
+        // One-shot: pin now and exit. Unlike the daemon loop this may open an
+        // idle camera (waking it briefly), which is fine for a manual/cold-plug
+        // pin — the caller asked for it.
         match resolve(&device_override) {
-            Some((path, real)) => {
-                let _ = real;
-                pin_if_auto(&path, temp);
+            Some((path, _real)) => {
+                pin_if_auto(&path, temp, true);
             }
             None => log("no camera found for --once"),
         }
@@ -112,11 +124,16 @@ fn run(device_override: Option<String>, temp: i32) {
 
         // ACTIVE: an app holds the camera awake, so opening it to pin costs
         // nothing extra. Re-pin on flips, and return to idle when apps leave.
+        // `force` carries a failed pin forward: if a re-pin half-completed
+        // (auto turned off but the temperature write failed), auto-WB now reads
+        // false and the normal is-auto check would skip it forever — so force
+        // the next cycle to pin regardless until one succeeds.
+        let mut force = false;
         loop {
             if holders(&real).is_empty() {
                 break;
             }
-            pin_if_auto(&path, temp);
+            force = !pin_if_auto(&path, temp, force);
             sleep(ACTIVE_POLL);
         }
     }
@@ -132,23 +149,36 @@ fn resolve(device_override: &Option<String>) -> Option<(String, String)> {
     Some((path, real))
 }
 
-/// Open the camera, and if auto WB is on, re-pin manual WB. Opens+closes the
-/// device; only call this while an app already holds the camera awake.
-fn pin_if_auto(path: &str, temp: i32) {
+/// Open the camera and, if auto WB is on (or `force`), re-pin manual WB.
+/// Returns true if the white balance is known-good afterwards (already manual,
+/// or successfully pinned), false if a failure leaves it uncertain.
+///
+/// Opens+closes the device. The daemon loop only calls this while an app
+/// already holds the camera awake (opening an idle camera wakes it and defeats
+/// autosuspend); the `--once` path deliberately calls it on a possibly-idle
+/// camera to satisfy an explicit one-shot/cold-plug pin.
+fn pin_if_auto(path: &str, temp: i32, force: bool) -> bool {
     let dev = match VideoFd::open(path) {
         Ok(d) => d,
         Err(e) => {
             log(&format!("open failed: {e}"));
-            return;
+            return false;
         }
     };
-    match controls::is_auto_wb(&dev) {
-        Ok(true) => match controls::pin_white_balance(&dev, temp) {
-            Ok(()) => log(&format!("re-pinned white balance to {temp}K")),
-            Err(e) => log(&format!("re-pin failed: {e}")),
-        },
-        Ok(false) => {} // already manual; nothing to do
-        Err(e) => log(&format!("read auto-WB failed: {e}")),
+    // On a read error, assume auto (pin) rather than skip.
+    let need = force || controls::is_auto_wb(&dev).unwrap_or(true);
+    if !need {
+        return true; // already manual; nothing to do
+    }
+    match controls::pin_white_balance(&dev, temp) {
+        Ok(()) => {
+            log(&format!("re-pinned white balance to {temp}K"));
+            true
+        }
+        Err(e) => {
+            log(&format!("re-pin failed: {e}"));
+            false
+        }
     }
     // dev dropped here -> fd closed.
 }
@@ -201,6 +231,12 @@ const IN_CLOEXEC: libc::c_int = 0o2000000; // O_CLOEXEC
 
 /// Block until an app opens `real`, or the device disappears, or `timeout`.
 /// Holds no fd on the camera — only an inotify watch, which does not open it.
+///
+/// Arms the inotify watch BEFORE re-checking holders, closing the TOCTOU race:
+/// the caller's earlier `holders()` scan takes milliseconds, and an app that
+/// opens the device during that scan would fire IN_OPEN before the watch
+/// existed and be missed. By watching first, then re-checking holders, any
+/// open is caught either by the recheck (already open) or by the live watch.
 fn wait_for_open(real: &str, timeout: Duration) -> OpenWait {
     let ino = unsafe { libc::inotify_init1(IN_CLOEXEC) };
     if ino < 0 {
@@ -215,9 +251,23 @@ fn wait_for_open(real: &str, timeout: Duration) -> OpenWait {
     };
     let wd = unsafe { libc::inotify_add_watch(ino, cpath.as_ptr(), IN_OPEN | IN_DELETE_SELF) };
     if wd < 0 {
+        let e = std::io::Error::last_os_error();
         unsafe { libc::close(ino) };
-        // Node likely vanished between resolve and watch.
-        return OpenWait::Gone;
+        // ENOENT/ENODEV: the node vanished between resolve and watch — treat as
+        // gone and let the caller re-validate presence. Anything else (e.g.
+        // ENOSPC: max_user_watches exhausted) is a real error to back off on,
+        // not a spurious "device gone" that would busy-loop.
+        return match e.raw_os_error() {
+            Some(libc::ENOENT) | Some(libc::ENODEV) => OpenWait::Gone,
+            _ => OpenWait::Error(e),
+        };
+    }
+
+    // Watch is armed: now re-check holders. If an app grabbed the device during
+    // the caller's scan-to-arm window, proceed straight to ACTIVE.
+    if !holders(real).is_empty() {
+        unsafe { libc::close(ino) };
+        return OpenWait::Opened;
     }
 
     let result = poll_inotify(ino, timeout);
@@ -248,6 +298,10 @@ fn poll_inotify(ino: RawFd, timeout: Duration) -> OpenWait {
     let n = n as usize;
     let mut off = 0usize;
     let header = std::mem::size_of::<libc::inotify_event>(); // 16 bytes
+    // Drain the whole batch before classifying. Device-gone wins over an open
+    // (a delete anywhere in the batch means the node is going away), so we scan
+    // all events rather than returning on the first IN_OPEN.
+    let mut saw_open = false;
     while off + header <= n {
         // Fields: wd(i32) mask(u32) cookie(u32) len(u32)
         let mask = u32::from_ne_bytes([buf[off + 4], buf[off + 5], buf[off + 6], buf[off + 7]]);
@@ -256,11 +310,15 @@ fn poll_inotify(ino: RawFd, timeout: Duration) -> OpenWait {
             return OpenWait::Gone;
         }
         if mask & IN_OPEN != 0 {
-            return OpenWait::Opened;
+            saw_open = true;
         }
         off += header + len;
     }
-    OpenWait::Timeout
+    if saw_open {
+        OpenWait::Opened
+    } else {
+        OpenWait::Timeout
+    }
 }
 
 fn sleep(d: Duration) {

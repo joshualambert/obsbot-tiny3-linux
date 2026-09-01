@@ -148,11 +148,12 @@ pub struct Device {
 static SEQ: AtomicU16 = AtomicU16::new(0);
 
 fn next_seq() -> u16 {
-    // Seed once from the pid so concurrent CLI invocations rarely collide.
-    let mut s = SEQ.load(Ordering::Relaxed);
-    if s == 0 {
-        s = (std::process::id() as u16) | 0x0100;
-        SEQ.store(s, Ordering::Relaxed);
+    // Seed once from the pid so concurrent CLI invocations rarely collide. Use
+    // a CAS so a racing thread can't roll the counter back to the seed after
+    // another thread has already advanced it.
+    if SEQ.load(Ordering::Relaxed) == 0 {
+        let seed = (std::process::id() as u16) | 0x0100;
+        let _ = SEQ.compare_exchange(0, seed, Ordering::Relaxed, Ordering::Relaxed);
     }
     let v = SEQ.fetch_add(1, Ordering::Relaxed).wrapping_add(1);
     if v == 0 {
@@ -203,7 +204,11 @@ impl Device {
             std::thread::sleep(Duration::from_millis(50));
             let raw = self.fd.xu_get(XU_UNIT, SEL_CMD)?;
             if let Some(r) = frame::parse(&raw) {
-                if r.seq == seq && r.cmd == cmd {
+                // Match seq AND cmd (the mailbox retains the previous reply),
+                // and require it to actually be a device reply — a real reply
+                // swaps sender/receiver, so sender is no longer the host. This
+                // rejects an echoed request frame sitting in the mailbox.
+                if r.seq == seq && r.cmd == cmd && r.sender != frame::SENDER_HOST {
                     return Ok(r);
                 }
             }
