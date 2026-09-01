@@ -124,16 +124,18 @@ wb_temp = 4000
 
 ## Omarchy / Hyprland integration
 
-- **Quickshell bar widget** — a native camera widget for the Omarchy bar
-  ([`packaging/omarchy/plugins/io.github.joshualambert.obsbot-tiny3/`](packaging/omarchy/plugins/io.github.joshualambert.obsbot-tiny3/)):
-  a webcam icon (pulses while the camera is live) that opens a popup with toggle
-  switches (sleep/wake, AI tracking, HDR, auto white balance), a preview
-  resolution dropdown, recenter, and a **Live preview** button. Install:
+- **Quickshell bar widget** — a native camera widget for the Omarchy bar (a
+  webcam icon that opens a popup with toggle switches for sleep/wake, AI
+  tracking, HDR, and auto white balance, a preview-resolution dropdown, recenter,
+  and a **Live preview** button). It's a **separate, optional** add-on with its
+  own repo/marketplace listing (it depends on the `t3ctl`/`t3-preview` commands
+  this project installs):
+  **[joshualambert/omarchy-obsbot-tiny3](https://github.com/joshualambert/omarchy-obsbot-tiny3)**
   ```bash
-  omarchy plugin enable io.github.joshualambert.obsbot-tiny3
-  # then add {"id": "io.github.joshualambert.obsbot-tiny3"} to the bar "right" list in ~/.config/omarchy/shell.json
-  omarchy restart shell
+  omarchy plugin install io.github.joshualambert.obsbot-tiny3   # once listed in the marketplace
   ```
+  `install.sh` does **not** install the widget — it only points you here if it
+  detects Omarchy, so the CLI stays clean on non-Omarchy distros (Ubuntu, Debian…).
 - **Live preview** — `t3-preview [WxH]` opens a small, pinned, corner self-view
   (mpv) that streams only while open and releases the camera on close, so it
   doesn't defeat sleep. The Hyprland float rule is in

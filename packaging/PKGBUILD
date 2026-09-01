@@ -58,11 +58,8 @@ package() {
     install -Dm644 packaging/hypr/windows.omarchy.lua \
         "$pkgdir/usr/share/obsbot-tiny3-linux/hypr/windows.omarchy.lua"
 
-    # Omarchy Quickshell bar-widget plugin + menu snippet
-    install -Dm644 packaging/omarchy/plugins/io.github.joshualambert.obsbot-tiny3/manifest.json \
-        "$pkgdir/usr/share/obsbot-tiny3-linux/omarchy/plugins/io.github.joshualambert.obsbot-tiny3/manifest.json"
-    install -Dm644 packaging/omarchy/plugins/io.github.joshualambert.obsbot-tiny3/Panel.qml \
-        "$pkgdir/usr/share/obsbot-tiny3-linux/omarchy/plugins/io.github.joshualambert.obsbot-tiny3/Panel.qml"
+    # Omarchy menu snippet (the bar WIDGET is a separate repo / marketplace
+    # listing: https://github.com/joshualambert/omarchy-obsbot-tiny3)
     install -Dm644 packaging/omarchy-menu.jsonc \
         "$pkgdir/usr/share/obsbot-tiny3-linux/omarchy/omarchy-menu.jsonc"
 
