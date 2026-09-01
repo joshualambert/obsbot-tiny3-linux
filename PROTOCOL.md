@@ -101,8 +101,8 @@ never by a reply.
 |---|---|---|---|---|---|
 | Get serial number | `0x01` | `0x18C8` | `0x0D` | — | ✅ `RMOWUHI3111PLN` (14 ASCII) |
 | Get UUID | `0x01` | `0x1808` | `0x0D` | — | ✅ 24 bytes |
-| Sleep | `0x25` | `0xA0C2` | `0x02` | `01 00 00 00` | ⏳ sent, LED verify pending |
-| Wake | `0x25` | `0xA0C2` | `0x02` | `00 00 00 00` | ⏳ sent, LED verify pending |
+| Sleep | `0x25` | `0xA0C2` | `0x02` | `01 00 00 00` | ✅ **LED off + gimbal parks** (physically verified) |
+| Wake | `0x25` | `0xA0C2` | `0x02` | `00 00 00 00` | ✅ **LED on + gimbal lifts** (physically verified) |
 | Gimbal recenter | `0x25` | `0x00C3` | `0x03` | `00 00 00 00 00 00` | ✅ centered (frame-verified) |
 
 Byte order note: `cmd` bytes on the wire are little-endian, e.g. sleep = `C2 A0`.
@@ -229,4 +229,5 @@ in such a room. Keep target temperature configurable.
 | 2026-08-31 | AI tracking on `16 02 02 00` → selector 6 | ✅ status byte 0x18 → 02; captured frame showed gimbal re-framing on subject |
 | 2026-08-31 | AI tracking off `16 02 00 00` | ✅ status byte 0x18 → 00 |
 | 2026-08-31 | Gimbal recenter cmd 0xC300 receiver 0x03 | ✅ frame-verified return to centered view |
-| 2026-08-31 | Sleep/wake cmd 0xA0C2 receiver 0x02 | frames accepted (no reply, expected); LED-level verification pending |
+| 2026-08-31 | Sleep cmd 0xA0C2 payload 01000000 | ✅ **verified**: LED off, gimbal parked (physical observation) |
+| 2026-08-31 | Wake cmd 0xA0C2 payload 00000000 | ✅ **verified**: LED on, gimbal lifted back up (physical observation) |

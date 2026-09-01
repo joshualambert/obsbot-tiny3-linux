@@ -1,0 +1,36 @@
+[package]
+name = "obsbot-tiny3"
+version = "0.1.0"
+edition = "2021"
+rust-version = "1.74"
+description = "Linux control suite for the OBSBOT Tiny 3 series webcam (sleep/wake, AI tracking, gimbal, white balance)"
+authors = ["Josh Lambert"]
+license = "MIT"
+repository = "https://github.com/joshlambert/obsbot-tiny3-linux"
+readme = "README.md"
+keywords = ["obsbot", "webcam", "uvc", "v4l2", "ptz"]
+categories = ["command-line-utilities", "hardware-support"]
+
+# Single small dependency: libc, for open/close/ioctl. Keeping the dependency
+# surface minimal makes AUR packaging trivial and the build fast.
+[dependencies]
+libc = "0.2"
+
+[lib]
+name = "obsbot_tiny3"
+path = "src/lib.rs"
+
+[[bin]]
+name = "t3ctl"
+path = "src/bin/t3ctl.rs"
+
+[[bin]]
+name = "t3-wb-guard"
+path = "src/bin/t3_wb_guard.rs"
+
+[profile.release]
+strip = true
+lto = true
+opt-level = "z"
+codegen-units = 1
+panic = "abort"
