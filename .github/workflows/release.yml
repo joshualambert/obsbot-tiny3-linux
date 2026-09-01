@@ -258,18 +258,20 @@ jobs:
           TAG: ${{ steps.ver.outputs.tag }}
         run: |
           set -euo pipefail
-          if git diff --quiet -- packaging/PKGBUILD; then
-            echo "PKGBUILD unchanged; nothing to commit."
-            exit 0
-          fi
           branch="${{ github.event.repository.default_branch }}"
           git config user.name  'github-actions[bot]'
           git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
-          pkgbuild=$(mktemp); cp packaging/PKGBUILD "$pkgbuild"
+          pkgbuild=$(mktemp); cp dist/PKGBUILD "$pkgbuild"
           git fetch origin "$branch"
           git checkout -B "$branch" "origin/$branch"
           cp "$pkgbuild" packaging/PKGBUILD
+          # `git diff` would report nothing when packaging/PKGBUILD is not yet
+          # tracked, so stage first and compare against the index.
           git add packaging/PKGBUILD
+          if git diff --cached --quiet -- packaging/PKGBUILD; then
+            echo "PKGBUILD unchanged; nothing to commit."
+            exit 0
+          fi
           git commit -m "packaging: pin PKGBUILD to the $TAG source tarball checksum"
-          # Never fail the release over this bookkeeping commit.
+          # Never fail a published release over this bookkeeping commit.
           git push origin "$branch" || echo "::warning::could not push the rendered PKGBUILD to $branch"
