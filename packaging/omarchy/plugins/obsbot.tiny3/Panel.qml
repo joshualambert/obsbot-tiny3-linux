@@ -17,6 +17,7 @@ Panel {
   id: root
   moduleName: "obsbot.tiny3"
   ipcTarget: "obsbot.tiny3"
+  manageIpc: false
 
   // Cheap, non-invasive (sysfs) — drives the bar icon dimming.
   property string powerState: "unknown" // "active" | "suspended" | "unknown"
@@ -29,8 +30,30 @@ Panel {
   property int wbTemp: 4000
   property bool hdr: false
 
+  // Preview capture resolution, chosen in the popup dropdown.
+  property string previewRes: "1920x1080"
+
   readonly property color fg: bar ? bar.foreground : Color.foreground
   readonly property real rowW: Style.space(300)
+
+  // Whimsy: a little rotating tagline under the header, and a live pulse.
+  readonly property var phrases: [
+    "Watching the room",
+    "Framing you up",
+    "Lights, camera…",
+    "Eyes on you",
+    "Keeping you centered",
+    "Ready for your close-up",
+    "Rolling",
+    "Looking sharp"
+  ]
+  property int phraseIndex: 0
+  property real pulse: 1.0
+
+  // Report the bar-slot size from the icon button, or the bar collapses this
+  // widget to zero width and nothing shows (mirrors omarchy.power).
+  implicitWidth: button.implicitWidth
+  implicitHeight: button.implicitHeight
 
   // --- data plumbing ---
 
@@ -42,7 +65,7 @@ Panel {
     afterAction.restart()
   }
 
-  function preview() { Quickshell.execDetached(["t3-preview"]) }
+  function preview() { Quickshell.execDetached(["t3-preview", root.previewRes]) }
 
   // Panel base's open() — refresh full state as the popup appears.
   function open() {
@@ -54,6 +77,13 @@ Panel {
 
   Timer { interval: 8000; running: true; repeat: true; onTriggered: root.refreshPower() }
   Timer { id: afterAction; interval: 500; onTriggered: { root.refreshStatus(); root.refreshPower() } }
+  // Rotate the tagline only while the popup is open.
+  Timer {
+    interval: 3200
+    running: root.opened
+    repeat: true
+    onTriggered: root.phraseIndex = (root.phraseIndex + 1) % root.phrases.length
+  }
 
   Process {
     id: powerProc
@@ -99,15 +129,28 @@ Panel {
     id: button
     anchors.fill: parent
     bar: root.bar
-    // Nerd Font camera glyph; dimmed when the camera is idle/suspended.
-    text: ""
-    opacity: (root.powerState === "active") ? 1.0 : 0.55
+    // Nerd Font webcam glyph.
+    text: "󰖠"
+    // Full opacity whenever the camera is present; faint only when unplugged.
+    opacity: root.present ? 1.0 : 0.4
     tooltipText: "OBSBOT Tiny 3"
+    // Gentle "live" pulse while the camera is in use (USB active).
+    scale: (root.powerState === "active") ? root.pulse : 1.0
+    Behavior on opacity { NumberAnimation { duration: 220 } }
+    Behavior on scale { NumberAnimation { duration: 180; easing.type: Easing.OutBack } }
     onPressed: function(b) {
       if (b === Qt.MiddleButton) { root.preview(); return }
       if (b === Qt.RightButton) { root.act(["toggle"]); return }
       root.toggle()
     }
+  }
+
+  // The heartbeat that drives the icon's live pulse.
+  SequentialAnimation on pulse {
+    running: root.powerState === "active"
+    loops: Animation.Infinite
+    NumberAnimation { to: 1.14; duration: 720; easing.type: Easing.InOutSine }
+    NumberAnimation { to: 1.0; duration: 720; easing.type: Easing.InOutSine }
   }
 
   // --- popup ---
@@ -135,9 +178,45 @@ Panel {
         anchors.top: parent.top
         spacing: Style.space(6)
 
+        // Entrance: fade in and rise with a little overshoot each time the
+        // popup opens.
+        opacity: 0
+        transform: Translate { id: slideT; y: 16 }
+        Connections {
+          target: root
+          function onOpenedChanged() {
+            if (root.opened) revealAnim.restart()
+          }
+        }
+        Component.onCompleted: if (root.opened) { column.opacity = 1; slideT.y = 0 }
+        ParallelAnimation {
+          id: revealAnim
+          NumberAnimation { target: column; property: "opacity"; from: 0; to: 1; duration: 240; easing.type: Easing.OutCubic }
+          NumberAnimation { target: slideT; property: "y"; from: 16; to: 0; duration: 340; easing.type: Easing.OutBack }
+        }
+
         PanelSectionHeader {
           text: "OBSBOT TINY 3"
           foreground: root.fg
+        }
+
+        // Whimsical rotating tagline (soft crossfade on change).
+        Text {
+          id: tagline
+          width: parent.width
+          color: Color.accent
+          font.family: root.bar ? root.bar.fontFamily : Style.font.family
+          font.pixelSize: Style.font.caption
+          font.italic: true
+          elide: Text.ElideRight
+          text: root.present ? root.phrases[root.phraseIndex] : "Say hi to the camera"
+          opacity: 0.85
+          Behavior on opacity { NumberAnimation { duration: 260; easing.type: Easing.InOutSine } }
+          Connections {
+            target: root
+            function onPhraseIndexChanged() { tagline.opacity = 0; taglineIn.restart() }
+          }
+          Timer { id: taglineIn; interval: 180; onTriggered: tagline.opacity = 0.85 }
         }
 
         Text {
@@ -156,34 +235,51 @@ Panel {
 
         PanelSeparator { foreground: root.fg }
 
-        Button {
+        Toggle {
           width: parent.width
-          leftAlign: true
+          label: "Awake"
+          description: root.asleep ? "camera asleep" : ""
+          checked: !root.asleep
           foreground: root.fg
-          text: root.asleep ? "Wake camera" : "Sleep camera"
           onClicked: root.act(["toggle"])
         }
-        Button {
+        Toggle {
           width: parent.width
-          leftAlign: true
+          label: "AI tracking"
+          checked: root.tracking !== "off"
           foreground: root.fg
-          text: (root.tracking !== "off") ? "AI tracking: on" : "AI tracking: off"
           onClicked: root.act(["track", "toggle"])
         }
-        Button {
+        Toggle {
           width: parent.width
-          leftAlign: true
+          label: "HDR"
+          checked: root.hdr
           foreground: root.fg
-          text: "White balance: " + (root.autoWb ? "auto" : "manual " + root.wbTemp + "K")
-          onClicked: root.act(["wb", root.autoWb ? "pin" : "auto"])
-        }
-        Button {
-          width: parent.width
-          leftAlign: true
-          foreground: root.fg
-          text: root.hdr ? "HDR: on" : "HDR: off"
           onClicked: root.act(["hdr", root.hdr ? "off" : "on"])
         }
+        Toggle {
+          width: parent.width
+          label: "Auto white balance"
+          description: root.autoWb ? "" : ("pinned " + root.wbTemp + "K")
+          checked: root.autoWb
+          foreground: root.fg
+          onClicked: root.act(["wb", root.autoWb ? "pin" : "auto"])
+        }
+
+        PanelSeparator { foreground: root.fg }
+
+        Dropdown {
+          width: parent.width
+          label: "Preview resolution"
+          value: root.previewRes
+          options: [
+            { value: "1280x720", label: "720p" },
+            { value: "1920x1080", label: "1080p" },
+            { value: "3840x2160", label: "2160p (4K)" }
+          ]
+          onChanged: function(v) { root.previewRes = v }
+        }
+
         Button {
           width: parent.width
           leftAlign: true
@@ -191,9 +287,6 @@ Panel {
           text: "Recenter gimbal"
           onClicked: root.act(["recenter"])
         }
-
-        PanelSeparator { foreground: root.fg }
-
         Button {
           width: parent.width
           leftAlign: true

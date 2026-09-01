@@ -10,6 +10,10 @@
 # corner-position it, and so it dodges the compositor's generic mpv rules.
 set -euo pipefail
 
+# Optional capture resolution (WxH), e.g. 1280x720 / 1920x1080 / 3840x2160.
+RES="${1:-1920x1080}"
+if ! [[ "$RES" =~ ^[0-9]{3,4}x[0-9]{3,4}$ ]]; then RES=1920x1080; fi
+
 APPID=obsbot-tiny3-preview
 # Match the actual mpv process, not any command line that merely mentions the
 # app-id (e.g. this script, or a shell running it) — pgrep/pkill -f matches
@@ -44,5 +48,5 @@ exec mpv \
     --input-conf=/dev/null \
     --cursor-autohide=always \
     --keepaspect=yes \
-    --demuxer-lavf-o=input_format=mjpeg,video_size=1280x720 \
+    --demuxer-lavf-o="input_format=mjpeg,video_size=$RES" \
     "av://v4l2:$DEV"
