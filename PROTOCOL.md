@@ -44,9 +44,27 @@ bNumControls     = 19
 bmControls       = ff ff 3f 00   → control bits 0..21 set (selectors 1..22 candidates)
 ```
 
-Status: discovered from descriptors; selector semantics not yet probed.
-This XU is the prime suspect for sleep/wake, AI tracking, and gimbal
-preset commands (Tiny4Linux drives the Tiny 2 via a UVC XU).
+Read-only probe results (GET_LEN / GET_INFO / GET_CUR via `UVCIOC_CTRL_QUERY`,
+2026-08-31, fw 0510): **selectors 1–22 all exist, all report length 60 bytes,
+all report caps 0x03 (GET+SET)**; selectors ≥23 return ENOENT. The uniform
+60-byte size suggests a generic vendor message pipe rather than per-feature
+controls. Non-zero GET_CUR payloads observed while idle (leading bytes,
+rest zero-padded to 60):
+
+| Selector | Leading bytes (hex) | Notes |
+|---|---|---|
+| 3 | `01` | |
+| 4 | `01` | |
+| 6 | `2e01000200000001000178000001010000000000017f2100020043000000001e00031000000000000800000a0301 01` | rich blob — device status/version? |
+| 7 | `06` | |
+| 9 | `01` | |
+| 10 | `0101` | |
+| 14 | `3ea00600` | u32 LE = 434238? |
+| others | all zeros | |
+
+Semantics not yet decoded. This XU is the prime suspect for sleep/wake, AI
+tracking, and gimbal preset commands (Tiny4Linux drives the Tiny 2 via a
+UVC XU). No SET_CUR has been issued yet.
 
 ## Standard UVC controls (verified via `v4l2-ctl --list-ctrls-menus`)
 
@@ -134,3 +152,4 @@ in such a room. Keep target temperature configurable.
 |---|---|---|
 | 2026-08-31 | Parse sysfs descriptors (no device open) | Found XU bUnitID=2 GUID `9a1e7291-6843-4683-6d92-39bc7906ee49`, 22 selector candidates; CDC ACM pair at if 4+5 |
 | 2026-08-31 | MJPG 1080p capture while idle | Wakes device (`runtime_status` → `active`), re-suspends ~2 s after close |
+| 2026-08-31 | XU GET_LEN/GET_INFO/GET_CUR sweep, selectors 1–32 | 1–22 exist, uniform 60-byte length, all GET+SET; ≥23 ENOENT; non-zero payloads on 3,4,6,7,9,10,14 |
