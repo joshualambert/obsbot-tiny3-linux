@@ -37,6 +37,7 @@ package() {
 
     install -Dm755 target/release/t3ctl "$pkgdir/usr/bin/t3ctl"
     install -Dm755 target/release/t3-wb-guard "$pkgdir/usr/bin/t3-wb-guard"
+    install -Dm755 bin/t3-preview "$pkgdir/usr/bin/t3-preview"
 
     # Per-user systemd unit (enable with: systemctl --user enable --now t3-wb-guard)
     install -Dm644 packaging/systemd/t3-wb-guard.service \
@@ -49,9 +50,21 @@ package() {
     # Default system config (used by the root/udev context); marked as backup.
     install -Dm644 packaging/config.example "$pkgdir/etc/obsbot-tiny3/config"
 
-    # Example Hyprland keybindings (user copies snippets they want)
+    # Example Hyprland keybindings + preview window rule (user copies what they want)
     install -Dm644 packaging/hypr/obsbot-tiny3.conf \
         "$pkgdir/usr/share/obsbot-tiny3-linux/hypr/obsbot-tiny3.conf"
+    install -Dm644 packaging/hypr/bindings.omarchy.lua \
+        "$pkgdir/usr/share/obsbot-tiny3-linux/hypr/bindings.omarchy.lua"
+    install -Dm644 packaging/hypr/windows.omarchy.lua \
+        "$pkgdir/usr/share/obsbot-tiny3-linux/hypr/windows.omarchy.lua"
+
+    # Omarchy Quickshell bar-widget plugin + menu snippet
+    install -Dm644 packaging/omarchy/plugins/obsbot.tiny3/manifest.json \
+        "$pkgdir/usr/share/obsbot-tiny3-linux/omarchy/plugins/obsbot.tiny3/manifest.json"
+    install -Dm644 packaging/omarchy/plugins/obsbot.tiny3/Panel.qml \
+        "$pkgdir/usr/share/obsbot-tiny3-linux/omarchy/plugins/obsbot.tiny3/Panel.qml"
+    install -Dm644 packaging/omarchy-menu.jsonc \
+        "$pkgdir/usr/share/obsbot-tiny3-linux/omarchy/omarchy-menu.jsonc"
 
     # Docs
     install -Dm644 README.md "$pkgdir/usr/share/doc/$pkgname/README.md"

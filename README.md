@@ -119,6 +119,20 @@ wb_temp = 4000
 
 ## Omarchy / Hyprland integration
 
+- **Quickshell bar widget** — a native camera widget for the Omarchy bar
+  ([`packaging/omarchy/plugins/obsbot.tiny3/`](packaging/omarchy/plugins/obsbot.tiny3/)):
+  a webcam icon (pulses while the camera is live) that opens a popup with toggle
+  switches (sleep/wake, AI tracking, HDR, auto white balance), a preview
+  resolution dropdown, recenter, and a **Live preview** button. Install:
+  ```bash
+  omarchy plugin enable obsbot.tiny3
+  # then add {"id": "obsbot.tiny3"} to the bar "right" list in ~/.config/omarchy/shell.json
+  omarchy restart shell
+  ```
+- **Live preview** — `t3-preview [WxH]` opens a small, pinned, corner self-view
+  (mpv) that streams only while open and releases the camera on close, so it
+  doesn't defeat sleep. The Hyprland float rule is in
+  [`packaging/hypr/windows.omarchy.lua`](packaging/hypr/windows.omarchy.lua).
 - **Keybindings** — copy from [`packaging/hypr/bindings.omarchy.lua`](packaging/hypr/bindings.omarchy.lua)
   into `~/.config/hypr/bindings.lua` (or the vanilla `.conf` form in the same
   directory). Defaults, all unbound in stock Omarchy:
