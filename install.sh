@@ -17,10 +17,11 @@ while [[ $# -gt 0 ]]; do
     esac
 done
 
+# Resolve to an absolute path — systemd rejects a relative ExecStart.
+PREFIX="$(realpath -m "$PREFIX")"
 REPO="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 BINDIR="${PREFIX}/bin"
 UNITDIR="${XDG_CONFIG_HOME:-$HOME/.config}/systemd/user"
-CONFDIR="${XDG_CONFIG_HOME:-$HOME/.config}/obsbot-tiny3"
 
 echo "==> building release binaries"
 ( cd "$REPO" && cargo build --release --locked )
@@ -29,12 +30,9 @@ echo "==> installing binaries to $BINDIR"
 install -Dm755 "$REPO/target/release/t3ctl" "$BINDIR/t3ctl"
 install -Dm755 "$REPO/target/release/t3-wb-guard" "$BINDIR/t3-wb-guard"
 
-echo "==> installing default config to $CONFDIR/config (kept if it exists)"
-if [[ ! -f "$CONFDIR/config" ]]; then
-    install -Dm644 "$REPO/packaging/config.example" "$CONFDIR/config"
-else
-    echo "    (existing config left untouched)"
-fi
+# No config is seeded here: the guard defaults to 4000K, and the system-wide
+# default lives at /etc/obsbot-tiny3/config (installed by install-root.sh). Only
+# create ~/.config/obsbot-tiny3/config yourself to override the temperature.
 
 echo "==> installing systemd user unit"
 mkdir -p "$UNITDIR"

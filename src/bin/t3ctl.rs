@@ -16,9 +16,9 @@ POWER
     toggle                Sleep if awake, wake if asleep
 
 INFO
-    status                Show current state (opens the device, which wakes it)
+    status                Show current state (control read; does NOT wake a sleeping camera)
     info                  Serial number, UUID, device node
-    power                 USB power state only (does NOT wake the camera)
+    power                 USB power state from sysfs (opens nothing)
 
 AI TRACKING
     track on|off          Enable/disable tracking
@@ -48,7 +48,8 @@ MISC
     reset                 Safe defaults: wb auto, tracking off, recenter, wake
     -h, --help            This help
 
-Notes: opening the camera wakes it. `power` and this help do not open it.
+Notes: control reads (status/info) do NOT wake a sleeping camera — only starting
+a video stream (a browser, ffmpeg) does. `power` and this help open nothing.
 ";
 
 fn main() -> ExitCode {
@@ -70,16 +71,23 @@ fn run(mut args: Vec<String>) -> Result<()> {
     let mut device_path: Option<String> = None;
     let mut json = false;
 
+    // --json is accepted anywhere (before or after the subcommand), so strip it
+    // up front rather than only matching it as a leading global option.
+    args.retain(|a| {
+        if a == "--json" {
+            json = true;
+            false
+        } else {
+            true
+        }
+    });
+
     // Global options may precede the subcommand.
     while let Some(first) = args.first() {
         match first.as_str() {
             "-h" | "--help" | "help" => {
                 print!("{USAGE}");
                 return Ok(());
-            }
-            "--json" => {
-                json = true;
-                args.remove(0);
             }
             "--device" | "-d" => {
                 args.remove(0);
@@ -110,6 +118,9 @@ fn run(mut args: Vec<String>) -> Result<()> {
         }
     };
 
+    // Gimbal-moving arguments (pan/tilt/zoom) and on/off toggles are validated
+    // BEFORE opening the device, so a malformed move (e.g. `t3ctl pan abc`)
+    // fails without touching the camera at all.
     match cmd.as_str() {
         "sleep" => open()?.sleep(),
         "wake" => open()?.wake(),
@@ -132,18 +143,51 @@ fn run(mut args: Vec<String>) -> Result<()> {
         "info" => cmd_info(&open()?, json),
         "track" => cmd_track(&open()?, rest),
         "recenter" | "park" | "home" => open()?.recenter(),
-        "pan" => open()?.set_pan_deg(need_f64(rest, "pan degrees")?),
-        "tilt" => open()?.set_tilt_deg(need_f64(rest, "tilt degrees")?),
-        "zoom" => open()?.set_zoom(need_i32(rest, "zoom 0..100")?),
+        "pan" => {
+            let d = need_finite(rest, "pan degrees")?;
+            open()?.set_pan_deg(d)
+        }
+        "tilt" => {
+            let d = need_finite(rest, "tilt degrees")?;
+            open()?.set_tilt_deg(d)
+        }
+        "zoom" => {
+            let z = need_i32(rest, "zoom 0..100")?;
+            open()?.set_zoom(z)
+        }
         "preset" => cmd_preset(&open()?, rest),
         "wb" => cmd_wb(&open()?, rest),
-        "hdr" => open()?.set_hdr(need_on_off(rest, "hdr")?),
+        "hdr" => {
+            let on = need_on_off(rest, "hdr")?;
+            open()?.set_hdr(on)
+        }
         "fov" => cmd_fov(&open()?, rest),
         "exposure" => cmd_exposure(&open()?, rest),
-        "face-ae" => open()?.set_face_ae(need_on_off(rest, "face-ae")?),
+        "face-ae" => {
+            let on = need_on_off(rest, "face-ae")?;
+            open()?.set_face_ae(on)
+        }
         "reset" => cmd_reset(&open()?),
         other => return Err(Error::Usage(format!("unknown command '{other}'"))),
     }
+}
+
+/// Minimal JSON string escaper for the fields we emit (control chars, quotes,
+/// backslashes). Keeps `--json` output valid even if a value contains oddities.
+fn json_str(s: &str) -> String {
+    let mut out = String::with_capacity(s.len() + 2);
+    for c in s.chars() {
+        match c {
+            '"' => out.push_str("\\\""),
+            '\\' => out.push_str("\\\\"),
+            '\n' => out.push_str("\\n"),
+            '\r' => out.push_str("\\r"),
+            '\t' => out.push_str("\\t"),
+            c if (c as u32) < 0x20 => out.push_str(&format!("\\u{:04x}", c as u32)),
+            c => out.push(c),
+        }
+    }
+    out
 }
 
 fn cmd_power(device_path: Option<&str>, json: bool) -> Result<()> {
@@ -154,7 +198,7 @@ fn cmd_power(device_path: Option<&str>, json: bool) -> Result<()> {
     let state = discover::usb_power_state(&path).unwrap_or_else(|| "unknown".into());
     let node = discover::real_node(&path).unwrap_or_else(|_| path.clone());
     if json {
-        println!("{{\"usb_power\":\"{state}\",\"node\":\"{node}\"}}");
+        println!("{{\"usb_power\":\"{}\",\"node\":\"{}\"}}", json_str(&state), json_str(&node));
     } else {
         println!("USB power state : {state}");
         println!("device node     : {node}");
@@ -170,7 +214,7 @@ fn cmd_status(dev: &Device, json: bool) -> Result<()> {
             "{{\"asleep\":{},\"tracking\":\"{}\",\"tracking_sport\":{},\"hdr\":{},\
              \"auto_wb\":{},\"wb_temp\":{},\"pan_deg\":{:.1},\"tilt_deg\":{:.1},\
              \"zoom\":{},\"auto_exposure\":{}}}",
-            s.asleep, s.tracking.label(), s.tracking_sport, s.hdr, s.auto_wb, s.wb_temp,
+            s.asleep, json_str(s.tracking.label()), s.tracking_sport, s.hdr, s.auto_wb, s.wb_temp,
             s.pan_deg, s.tilt_deg, s.zoom, s.auto_exposure
         );
     } else {
@@ -188,7 +232,10 @@ fn cmd_info(dev: &Device, json: bool) -> Result<()> {
     let serial = dev.serial().unwrap_or_else(|_| "(unavailable)".into());
     let uuid = dev.uuid_hex().unwrap_or_else(|_| "(unavailable)".into());
     if json {
-        println!("{{\"serial\":\"{serial}\",\"uuid\":\"{uuid}\",\"node\":\"{}\"}}", dev.path());
+        println!(
+            "{{\"serial\":\"{}\",\"uuid\":\"{}\",\"node\":\"{}\"}}",
+            json_str(&serial), json_str(&uuid), json_str(dev.path())
+        );
     } else {
         println!("serial : {serial}");
         println!("uuid   : {uuid}");
@@ -311,6 +358,17 @@ fn need_f64(rest: &[String], what: &str) -> Result<f64> {
         .ok_or_else(|| Error::Usage(format!("expected {what}")))?
         .parse()
         .map_err(|_| Error::Usage(format!("{what} must be a number")))
+}
+
+/// Like [`need_f64`] but rejects NaN/inf, which would otherwise cast to 0 and
+/// silently move the gimbal to center.
+fn need_finite(rest: &[String], what: &str) -> Result<f64> {
+    let v = need_f64(rest, what)?;
+    if v.is_finite() {
+        Ok(v)
+    } else {
+        Err(Error::Usage(format!("{what} must be a finite number")))
+    }
 }
 
 fn need_i32(rest: &[String], what: &str) -> Result<i32> {

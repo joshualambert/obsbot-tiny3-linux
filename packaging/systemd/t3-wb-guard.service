@@ -8,16 +8,12 @@ Type=simple
 ExecStart=/usr/bin/t3-wb-guard
 Restart=always
 RestartSec=5
-# Hardening: this only needs to read /proc, watch /dev/video*, and issue V4L2
-# ioctls — no network, no new privileges, no writes outside runtime dirs.
+# Light hardening only. NoNewPrivileges is always safe. The mount-namespace
+# sandbox directives (ProtectSystem/ProtectHome/…) are deliberately omitted:
+# in a *user* unit they require unprivileged user namespaces, which some
+# systems disable (kernel.unprivileged_userns_clone=0), and there they make the
+# whole unit fail to start. The guard needs no filesystem writes anyway.
 NoNewPrivileges=true
-ProtectSystem=strict
-ProtectHome=read-only
-ProtectControlGroups=true
-ProtectKernelTunables=true
-RestrictAddressFamilies=AF_UNIX
-SystemCallFilter=@system-service
-SystemCallErrorNumber=EPERM
 
 [Install]
 WantedBy=default.target

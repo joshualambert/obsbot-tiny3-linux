@@ -41,7 +41,7 @@ it on real hardware. If you own one, please help:
 Auto-detection already matches any `/dev/v4l/by-id` node containing
 `OBSBOT_Tiny_3`, so `t3ctl` should find your camera with no change. Only the
 **udev rule** needs your product ID for the group-access + cold-plug WB pin.
-Add a line to [`packaging/udev/99-obsbot-tiny3.rules`](packaging/udev/99-obsbot-tiny3.rules)
+Add a line to [`packaging/udev/71-obsbot-tiny3.rules`](packaging/udev/71-obsbot-tiny3.rules)
 mirroring the `ff04` entry with your PID, and send a PR.
 
 ## Development

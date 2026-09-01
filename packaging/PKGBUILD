@@ -43,8 +43,8 @@ package() {
         "$pkgdir/usr/lib/systemd/user/t3-wb-guard.service"
 
     # udev: group access + cold-plug WB pin
-    install -Dm644 packaging/udev/99-obsbot-tiny3.rules \
-        "$pkgdir/usr/lib/udev/rules.d/99-obsbot-tiny3.rules"
+    install -Dm644 packaging/udev/71-obsbot-tiny3.rules \
+        "$pkgdir/usr/lib/udev/rules.d/71-obsbot-tiny3.rules"
 
     # Default system config (used by the root/udev context); marked as backup.
     install -Dm644 packaging/config.example "$pkgdir/etc/obsbot-tiny3/config"

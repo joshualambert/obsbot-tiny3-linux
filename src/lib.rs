@@ -5,8 +5,8 @@
 //! this crate implements from scratch and has verified against a real Tiny 3
 //! Lite. See `PROTOCOL.md` for the wire details and firmware quirks.
 //!
-//! The high-level entry point is [`device::Device`]. Note that **opening the
-//! device wakes the camera** — see the module docs.
+//! The high-level entry point is [`device::Device`]. Note that **an open fd
+//! blocks the camera from sleeping** — see the module docs.
 
 pub mod config;
 pub mod controls;

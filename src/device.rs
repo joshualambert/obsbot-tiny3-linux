@@ -1,9 +1,9 @@
 //! High-level device API: vendor commands (sleep/wake/tracking/gimbal) over the
 //! framed V3 protocol and raw TLVs, plus the standard-UVC controls.
 //!
-//! Every method here that talks to the camera requires an open [`VideoFd`],
-//! and **opening wakes the camera**. Hold a [`Device`] only when you intend the
-//! camera awake.
+//! Every method here that talks to the camera requires an open [`VideoFd`], and
+//! **an open fd blocks the camera from sleeping** (it holds USB autosuspend
+//! off). Hold a [`Device`] only while you intend the camera in use.
 
 use crate::controls;
 use crate::error::{Error, Result};
@@ -164,13 +164,13 @@ fn next_seq() -> u16 {
 }
 
 impl Device {
-    /// Discover and open the first Tiny 3 family camera. **Wakes the camera.**
+    /// Discover and open the first Tiny 3 family camera. Holds the fd (blocks sleep).
     pub fn open_default() -> Result<Device> {
         let path = crate::discover::find_device()?;
         Device::open_path(&path)
     }
 
-    /// Open a specific node path. **Wakes the camera.**
+    /// Open a specific node path. Holds the fd (blocks sleep).
     pub fn open_path(path: &str) -> Result<Device> {
         let fd = VideoFd::open(path)?;
         Ok(Device { fd, path: path.to_string() })

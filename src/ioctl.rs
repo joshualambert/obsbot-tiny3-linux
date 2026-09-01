@@ -1,10 +1,12 @@
 //! Raw ioctl layer over a `/dev/videoN` fd: UVC extension-unit queries and
 //! standard V4L2 controls. No external V4L2 library — just libc.
 //!
-//! CRITICAL QUIRK: opening the video node at all wakes the camera (LED on,
-//! gimbal live). Callers that must stay fd-free while the camera is idle
-//! (the WB guard) must not construct a [`VideoFd`] until an app is already
-//! holding the camera awake. See `t3-wb-guard`.
+//! CRITICAL QUIRK: holding any open fd on the video node keeps the USB
+//! interface busy and blocks runtime autosuspend, so the camera can never sleep
+//! while a fd is held. (Starting a capture *stream* additionally wakes the
+//! camera from vendor sleep — LED on, gimbal live.) Callers that must let the
+//! camera sleep while idle (the WB guard) therefore construct no [`VideoFd`]
+//! until an app is already holding the camera awake. See `t3-wb-guard`.
 
 use crate::error::{Error, Result};
 use std::os::unix::io::RawFd;
@@ -52,7 +54,8 @@ pub struct VideoFd {
 }
 
 impl VideoFd {
-    /// Open the node read/write. **This wakes the camera.**
+    /// Open the node read/write. Resumes the USB device and, while the fd is
+    /// held, blocks autosuspend (so the camera can't sleep). Drop to release.
     pub fn open(path: &str) -> Result<VideoFd> {
         let c = std::ffi::CString::new(path).map_err(|_| {
             Error::Usage(format!("bad device path: {path}"))

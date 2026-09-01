@@ -6,11 +6,12 @@
 //!
 //! Two firmware quirks shape the whole design:
 //!
-//! 1. Opening the video node at all wakes the camera (LED on, gimbal live).
-//!    While the camera is idle this guard must hold ZERO file descriptors on it,
-//!    or the camera can never enter USB autosuspend. So idle waiting uses an
-//!    inotify IN_OPEN watch, which does NOT open the device. We only open the
-//!    camera once an app is already holding it awake.
+//! 1. Holding any open fd on the video node blocks USB autosuspend, so while
+//!    the camera is idle this guard must hold ZERO file descriptors on it or the
+//!    camera can never sleep. (Starting a capture stream also wakes the camera
+//!    from vendor sleep — LED on, gimbal live.) So idle waiting uses an inotify
+//!    IN_OPEN watch, which does NOT open the device. We only open the camera
+//!    once an app is already holding it awake.
 //!
 //! 2. Write order is load-bearing: the last-written WB control becomes the
 //!    active source, so temperature is written LAST (see controls::pin_white_balance).
@@ -73,9 +74,16 @@ fn main() {
         }
     }
 
+    // Clamp rather than exit: this runs as a Restart=always service, so a bad
+    // value in the config file must not turn into an infinite crash-restart
+    // loop. Warn and carry on with the nearest in-range temperature.
     if !(controls::WB_TEMP_MIN..=controls::WB_TEMP_MAX).contains(&temp) {
-        eprintln!("t3-wb-guard: temperature {temp} out of range {}..{}", controls::WB_TEMP_MIN, controls::WB_TEMP_MAX);
-        std::process::exit(2);
+        let clamped = temp.clamp(controls::WB_TEMP_MIN, controls::WB_TEMP_MAX);
+        eprintln!(
+            "t3-wb-guard: temperature {temp}K out of range {}..{}, using {clamped}K",
+            controls::WB_TEMP_MIN, controls::WB_TEMP_MAX
+        );
+        temp = clamped;
     }
 
     log(&format!("starting; target white balance {temp}K"));
