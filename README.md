@@ -59,7 +59,7 @@ Requires a Rust toolchain (`rustup` or the `rust` package) and `v4l-utils`
 (optional, for cross-checking).
 
 ```bash
-git clone https://github.com/joshlambert/obsbot-tiny3-linux
+git clone https://github.com/joshualambert/obsbot-tiny3-linux
 cd obsbot-tiny3-linux
 ./install.sh                       # builds + installs to ~/.local/bin, enables the WB guard
 sudo ./packaging/install-root.sh   # udev rule + system config (one-time, needs root)

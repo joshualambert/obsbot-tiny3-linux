@@ -53,7 +53,7 @@ mkdir -p "$UNITDIR"
 cat > "$UNITDIR/t3-wb-guard.service" <<EOF
 [Unit]
 Description=OBSBOT Tiny 3 white-balance guard (re-pins manual WB when apps flip it to auto)
-Documentation=https://github.com/joshlambert/obsbot-tiny3-linux
+Documentation=https://github.com/joshualambert/obsbot-tiny3-linux
 
 [Service]
 Type=simple

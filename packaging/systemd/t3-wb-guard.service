@@ -1,6 +1,6 @@
 [Unit]
 Description=OBSBOT Tiny 3 white-balance guard (re-pins manual WB when apps flip it to auto)
-Documentation=https://github.com/joshlambert/obsbot-tiny3-linux
+Documentation=https://github.com/joshualambert/obsbot-tiny3-linux
 # The device may not exist yet at login; the guard polls for it, so no hard dep.
 
 [Service]
