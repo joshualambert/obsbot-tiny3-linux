@@ -23,12 +23,22 @@ REPO="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 BINDIR="${PREFIX}/bin"
 UNITDIR="${XDG_CONFIG_HOME:-$HOME/.config}/systemd/user"
 
-echo "==> building release binaries"
-( cd "$REPO" && cargo build --release --locked )
+# Two shapes of source tree land here: a published release tarball, which ships
+# the binaries prebuilt next to this script, and a git clone, which does not.
+if [[ -x "$REPO/t3ctl" && -x "$REPO/t3-wb-guard" ]]; then
+    echo "==> using the prebuilt binaries shipped in this release archive"
+    T3CTL="$REPO/t3ctl"
+    WB_GUARD="$REPO/t3-wb-guard"
+else
+    echo "==> building release binaries"
+    ( cd "$REPO" && cargo build --release --locked )
+    T3CTL="$REPO/target/release/t3ctl"
+    WB_GUARD="$REPO/target/release/t3-wb-guard"
+fi
 
 echo "==> installing binaries to $BINDIR"
-install -Dm755 "$REPO/target/release/t3ctl" "$BINDIR/t3ctl"
-install -Dm755 "$REPO/target/release/t3-wb-guard" "$BINDIR/t3-wb-guard"
+install -Dm755 "$T3CTL" "$BINDIR/t3ctl"
+install -Dm755 "$WB_GUARD" "$BINDIR/t3-wb-guard"
 install -Dm755 "$REPO/bin/t3-preview" "$BINDIR/t3-preview"
 
 # The Omarchy bar widget is intentionally NOT installed here — this installer is

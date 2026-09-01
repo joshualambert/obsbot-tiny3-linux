@@ -49,30 +49,84 @@ needs their product ID added (one line — see [`CONTRIBUTING.md`](CONTRIBUTING.
 
 ## Install
 
-### From the AUR (Arch)
+Every release is an **immutable tag** with checksummed, provenance-attested
+assets — statically linked binaries for `x86_64` and `aarch64`, `.deb` / `.rpm` /
+Arch packages, and a source tarball the PKGBUILD pins by `sha256`. Nothing in
+the install path tracks a mutable branch. See
+[**Releases**](https://github.com/joshualambert/obsbot-tiny3-linux/releases).
+
+### Prebuilt binaries (any distro)
 
 ```bash
-# once published:
-yay -S obsbot-tiny3-linux
-# then, per user:
-systemctl --user enable --now t3-wb-guard.service     # optional WB guard
+VER=0.1.0
+ARCH=x86_64          # or: aarch64
+REL=https://github.com/joshualambert/obsbot-tiny3-linux/releases/download/v$VER
+
+curl -fLO "$REL/obsbot-tiny3-linux-$VER-$ARCH-linux-musl.tar.gz"
+curl -fLO "$REL/SHA256SUMS"
+sha256sum --check --ignore-missing SHA256SUMS      # must print: OK
+
+tar xzf "obsbot-tiny3-linux-$VER-$ARCH-linux-musl.tar.gz"
+cd "obsbot-tiny3-linux-$VER-$ARCH-linux-musl"
+./install.sh                       # installs to ~/.local/bin, enables the WB guard
+sudo ./packaging/install-root.sh   # udev rule + system config (one-time, needs root)
 ```
 
-### From source
+Every asset also carries a [Sigstore build-provenance
+attestation](https://docs.github.com/actions/security-guides/using-artifact-attestations),
+which proves it was built by this repo's release workflow from that tag:
+
+```bash
+gh attestation verify "obsbot-tiny3-linux-$VER-$ARCH-linux-musl.tar.gz" \
+  --repo joshualambert/obsbot-tiny3-linux
+```
+
+The binaries are static (musl), so the tarball, `.deb` and `.rpm` have no
+runtime library dependencies. `mpv` is only needed for the optional
+`t3-preview` self-view window.
+
+### Distro packages
+
+```bash
+# Debian / Ubuntu
+sudo apt install ./obsbot-tiny3-linux_${VER}_amd64.deb
+# Fedora / RHEL
+sudo dnf install ./obsbot-tiny3-linux-${VER}.x86_64.rpm
+# Arch — the prebuilt package, or build from the pinned PKGBUILD
+sudo pacman -U ./obsbot-tiny3-linux-${VER}-1-x86_64.pkg.tar.zst
+```
+
+Then, per user: `systemctl --user enable --now t3-wb-guard.service`.
+
+Arch users who prefer to build from source can take the `PKGBUILD` published
+with each release (also committed at
+[`packaging/PKGBUILD`](packaging/PKGBUILD)). It pins the release's own source
+tarball by `sha256` — no `SKIP`, and no dependency on GitHub's regenerable
+`/archive/` tarballs:
+
+```bash
+curl -fLO "$REL/PKGBUILD" && makepkg -si
+```
+
+### From a git checkout (development)
 
 Requires a Rust toolchain (`rustup` or the `rust` package) and `v4l-utils`
-(optional, for cross-checking).
+(optional, for cross-checking). Use this if you are hacking on the code; for
+a normal install prefer a release above, so you get a verifiable artifact.
 
 ```bash
 git clone https://github.com/joshualambert/obsbot-tiny3-linux
 cd obsbot-tiny3-linux
-./install.sh                       # builds + installs to ~/.local/bin, enables the WB guard
+git checkout v0.1.0                # pin to a release rather than tracking main
+./install.sh                       # builds + installs to ~/.local/bin
 sudo ./packaging/install-root.sh   # udev rule + system config (one-time, needs root)
 ```
 
-`./install.sh` installs `t3ctl` and `t3-wb-guard` to `~/.local/bin`, a per-user
-systemd unit, and a default config at `~/.config/obsbot-tiny3/config`. Make sure
-`~/.local/bin` is on your `PATH`.
+`./install.sh` installs `t3ctl`, `t3-wb-guard` and `t3-preview` to
+`~/.local/bin` plus a per-user systemd unit; it needs no root and writes nothing
+outside your home. Make sure `~/.local/bin` is on your `PATH`. The system-wide
+default config lives at `/etc/obsbot-tiny3/config`; override it per user in
+`~/.config/obsbot-tiny3/config`.
 
 ## Usage
 

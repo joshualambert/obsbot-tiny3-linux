@@ -102,13 +102,15 @@ fn run(mut args: Vec<String>) -> Result<()> {
         }
     }
 
-    let cmd = args.first().cloned().ok_or_else(|| Error::Usage("no command given".into()))?;
+    let cmd = args
+        .first()
+        .cloned()
+        .ok_or_else(|| Error::Usage("no command given".into()))?;
     let rest = &args[1..];
 
     // Commands that must NOT open the device (to avoid waking the camera).
-    match cmd.as_str() {
-        "power" => return cmd_power(device_path.as_deref(), json),
-        _ => {}
+    if cmd.as_str() == "power" {
+        return cmd_power(device_path.as_deref(), json);
     }
 
     let open = || -> Result<Device> {
@@ -168,7 +170,7 @@ fn run(mut args: Vec<String>) -> Result<()> {
             open()?.set_face_ae(on)
         }
         "reset" => cmd_reset(&open()?),
-        other => return Err(Error::Usage(format!("unknown command '{other}'"))),
+        other => Err(Error::Usage(format!("unknown command '{other}'"))),
     }
 }
 
@@ -198,11 +200,17 @@ fn cmd_power(device_path: Option<&str>, json: bool) -> Result<()> {
     let state = discover::usb_power_state(&path).unwrap_or_else(|| "unknown".into());
     let node = discover::real_node(&path).unwrap_or_else(|_| path.clone());
     if json {
-        println!("{{\"usb_power\":\"{}\",\"node\":\"{}\"}}", json_str(&state), json_str(&node));
+        println!(
+            "{{\"usb_power\":\"{}\",\"node\":\"{}\"}}",
+            json_str(&state),
+            json_str(&node)
+        );
     } else {
         println!("USB power state : {state}");
         println!("device node     : {node}");
-        println!("(this is USB autosuspend, not the vendor sleep bit — the LED is the ground truth)");
+        println!(
+            "(this is USB autosuspend, not the vendor sleep bit — the LED is the ground truth)"
+        );
     }
     Ok(())
 }
@@ -214,16 +222,44 @@ fn cmd_status(dev: &Device, json: bool) -> Result<()> {
             "{{\"asleep\":{},\"tracking\":\"{}\",\"tracking_sport\":{},\"hdr\":{},\
              \"auto_wb\":{},\"wb_temp\":{},\"pan_deg\":{:.1},\"tilt_deg\":{:.1},\
              \"zoom\":{},\"auto_exposure\":{}}}",
-            s.asleep, json_str(s.tracking.label()), s.tracking_sport, s.hdr, s.auto_wb, s.wb_temp,
-            s.pan_deg, s.tilt_deg, s.zoom, s.auto_exposure
+            s.asleep,
+            json_str(s.tracking.label()),
+            s.tracking_sport,
+            s.hdr,
+            s.auto_wb,
+            s.wb_temp,
+            s.pan_deg,
+            s.tilt_deg,
+            s.zoom,
+            s.auto_exposure
         );
     } else {
-        println!("power       : {}", if s.asleep { "asleep" } else { "awake" });
-        println!("tracking    : {}{}", s.tracking.label(), if s.tracking_sport { " (sport)" } else { "" });
+        println!(
+            "power       : {}",
+            if s.asleep { "asleep" } else { "awake" }
+        );
+        println!(
+            "tracking    : {}{}",
+            s.tracking.label(),
+            if s.tracking_sport { " (sport)" } else { "" }
+        );
         println!("hdr         : {}", onoff(s.hdr));
-        println!("white bal.  : {}", if s.auto_wb { "auto".to_string() } else { format!("manual {}K", s.wb_temp) });
-        println!("exposure    : {}", if s.auto_exposure { "auto" } else { "manual" });
-        println!("gimbal      : pan {:.1}°, tilt {:.1}°, zoom {}", s.pan_deg, s.tilt_deg, s.zoom);
+        println!(
+            "white bal.  : {}",
+            if s.auto_wb {
+                "auto".to_string()
+            } else {
+                format!("manual {}K", s.wb_temp)
+            }
+        );
+        println!(
+            "exposure    : {}",
+            if s.auto_exposure { "auto" } else { "manual" }
+        );
+        println!(
+            "gimbal      : pan {:.1}°, tilt {:.1}°, zoom {}",
+            s.pan_deg, s.tilt_deg, s.zoom
+        );
     }
     Ok(())
 }
@@ -234,7 +270,9 @@ fn cmd_info(dev: &Device, json: bool) -> Result<()> {
     if json {
         println!(
             "{{\"serial\":\"{}\",\"uuid\":\"{}\",\"node\":\"{}\"}}",
-            json_str(&serial), json_str(&uuid), json_str(dev.path())
+            json_str(&serial),
+            json_str(&uuid),
+            json_str(dev.path())
         );
     } else {
         println!("serial : {serial}");
@@ -245,7 +283,9 @@ fn cmd_info(dev: &Device, json: bool) -> Result<()> {
 }
 
 fn cmd_track(dev: &Device, rest: &[String]) -> Result<()> {
-    let arg = rest.first().ok_or_else(|| Error::Usage("track needs on|off|toggle|<mode>|speed".into()))?;
+    let arg = rest
+        .first()
+        .ok_or_else(|| Error::Usage("track needs on|off|toggle|<mode>|speed".into()))?;
     if arg == "toggle" {
         let on = dev.status()?.tracking != TrackMode::Off;
         return if on {
@@ -285,14 +325,28 @@ fn cmd_preset(dev: &Device, rest: &[String]) -> Result<()> {
             Ok(())
         }
         Some("save") => {
-            let name = rest.get(1).ok_or_else(|| Error::Usage("preset save <name>".into()))?;
+            let name = rest
+                .get(1)
+                .ok_or_else(|| Error::Usage("preset save <name>".into()))?;
             let s = dev.status()?;
-            config::save_preset(name, Preset { pan_deg: s.pan_deg, tilt_deg: s.tilt_deg, zoom: s.zoom })?;
-            println!("saved preset '{name}' (pan {:.1}°, tilt {:.1}°, zoom {})", s.pan_deg, s.tilt_deg, s.zoom);
+            config::save_preset(
+                name,
+                Preset {
+                    pan_deg: s.pan_deg,
+                    tilt_deg: s.tilt_deg,
+                    zoom: s.zoom,
+                },
+            )?;
+            println!(
+                "saved preset '{name}' (pan {:.1}°, tilt {:.1}°, zoom {})",
+                s.pan_deg, s.tilt_deg, s.zoom
+            );
             Ok(())
         }
         Some("recall") | Some("load") => {
-            let name = rest.get(1).ok_or_else(|| Error::Usage("preset recall <name>".into()))?;
+            let name = rest
+                .get(1)
+                .ok_or_else(|| Error::Usage("preset recall <name>".into()))?;
             let p = config::load_preset(name)?;
             dev.set_zoom(p.zoom)?;
             dev.set_pan_deg(p.pan_deg)?;
@@ -316,7 +370,8 @@ fn cmd_wb(dev: &Device, rest: &[String]) -> Result<()> {
         Some("pin") => dev.set_wb_temp(config::Config::load().wb_temp),
         _ => Err(Error::Usage(format!(
             "wb auto | wb temp <{}..{}> | wb pin",
-            controls::WB_TEMP_MIN, controls::WB_TEMP_MAX
+            controls::WB_TEMP_MIN,
+            controls::WB_TEMP_MAX
         ))),
     }
 }
@@ -335,7 +390,9 @@ fn cmd_exposure(dev: &Device, rest: &[String]) -> Result<()> {
     match rest.first().map(String::as_str) {
         Some("auto") => dev.set_auto_exposure(true),
         Some(v) => {
-            let n: i32 = v.parse().map_err(|_| Error::Usage("exposure auto|<1..2500>".into()))?;
+            let n: i32 = v
+                .parse()
+                .map_err(|_| Error::Usage("exposure auto|<1..2500>".into()))?;
             dev.set_exposure(n)
         }
         None => Err(Error::Usage("exposure auto|<1..2500>".into())),

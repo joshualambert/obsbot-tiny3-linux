@@ -1,0 +1,275 @@
+name: Release
+
+# Publishes an immutable, checksummed release for every `v*` tag:
+#   * static (musl) binary tarballs for x86_64 and aarch64
+#   * .deb / .rpm / Arch .pkg.tar.zst packages for amd64 and arm64
+#   * a self-hosted source tarball (NOT GitHub's auto-generated one, which is
+#     regenerable) that the PKGBUILD pins by sha256
+#   * SHA256SUMS covering every asset
+#   * Sigstore build provenance attestations for every asset
+on:
+  push:
+    tags: ['v*']
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: 'Existing tag to (re)build a release for, e.g. v0.1.0'
+        required: true
+
+permissions:
+  contents: read
+
+env:
+  NFPM_VERSION: '2.47.0'
+
+jobs:
+  build:
+    name: build ${{ matrix.target }}
+    runs-on: ${{ matrix.runner }}
+    strategy:
+      fail-fast: true
+      matrix:
+        include:
+          - target: x86_64-unknown-linux-musl
+            runner: ubuntu-latest
+            pkgarch: amd64
+          - target: aarch64-unknown-linux-musl
+            runner: ubuntu-24.04-arm
+            pkgarch: arm64
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.tag || github.ref }}
+
+      - name: Install Rust + musl target
+        run: |
+          rustup toolchain install stable --profile minimal
+          rustup default stable
+          rustup target add ${{ matrix.target }}
+
+      - name: Install musl toolchain
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq musl-tools
+
+      - name: Build
+        run: cargo build --release --locked --target ${{ matrix.target }}
+
+      - name: Verify the binaries are static
+        run: |
+          for b in t3ctl t3-wb-guard; do
+            path="target/${{ matrix.target }}/release/$b"
+            file "$path"
+            # A statically linked binary must have no dynamic interpreter.
+            if file "$path" | grep -q 'dynamically linked'; then
+              echo "::error::$b is dynamically linked; expected a static musl build" >&2
+              exit 1
+            fi
+            "$path" --help >/dev/null 2>&1 || true
+          done
+
+      - name: Stage binaries
+        run: |
+          mkdir -p staging/${{ matrix.pkgarch }}
+          install -Dm755 target/${{ matrix.target }}/release/t3ctl \
+            staging/${{ matrix.pkgarch }}/t3ctl
+          install -Dm755 target/${{ matrix.target }}/release/t3-wb-guard \
+            staging/${{ matrix.pkgarch }}/t3-wb-guard
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: bin-${{ matrix.pkgarch }}
+          path: staging/${{ matrix.pkgarch }}/
+          retention-days: 1
+          if-no-files-found: error
+
+  release:
+    name: package + publish
+    needs: build
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write        # create the release, push the rendered PKGBUILD
+      id-token: write        # Sigstore OIDC, for build provenance
+      attestations: write
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.tag || github.ref }}
+          fetch-depth: 0
+
+      - name: Resolve version
+        id: ver
+        run: |
+          tag="${{ inputs.tag || github.ref_name }}"
+          version="${tag#v}"
+          cargo_version="$(sed -n '0,/^version = /s/^version = "\(.*\)"/\1/p' Cargo.toml)"
+          if [[ "$version" != "$cargo_version" ]]; then
+            echo "::error::tag $tag implies version $version but Cargo.toml says $cargo_version" >&2
+            exit 1
+          fi
+          echo "tag=$tag"          >> "$GITHUB_OUTPUT"
+          echo "version=$version"  >> "$GITHUB_OUTPUT"
+
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: bin-*
+          path: staging
+
+      - name: Restore executable bits
+        run: chmod +x staging/bin-*/t3ctl staging/bin-*/t3-wb-guard
+
+      - name: Install nfpm (checksum-verified)
+        run: |
+          base="https://github.com/goreleaser/nfpm/releases/download/v${NFPM_VERSION}"
+          curl -sSfL "$base/nfpm_${NFPM_VERSION}_amd64.deb" -o /tmp/nfpm.deb
+          curl -sSfL "$base/checksums.txt" -o /tmp/nfpm-checksums.txt
+          ( cd /tmp && grep " nfpm_${NFPM_VERSION}_amd64.deb\$" nfpm-checksums.txt \
+              | sed "s| nfpm_${NFPM_VERSION}_amd64.deb| nfpm.deb|" | sha256sum -c - )
+          sudo dpkg -i /tmp/nfpm.deb
+
+      - name: Build binary tarballs
+        env:
+          VERSION: ${{ steps.ver.outputs.version }}
+        run: |
+          set -euo pipefail
+          mkdir -p dist
+          declare -A TRIPLE=( [amd64]=x86_64-linux-musl [arm64]=aarch64-linux-musl )
+          for arch in amd64 arm64; do
+            name="obsbot-tiny3-linux-${VERSION}-${TRIPLE[$arch]}"
+            root="build/$name"
+            mkdir -p "$root/bin"
+            install -Dm755 "staging/bin-$arch/t3ctl"       "$root/t3ctl"
+            install -Dm755 "staging/bin-$arch/t3-wb-guard" "$root/t3-wb-guard"
+            install -Dm755 bin/t3-preview                  "$root/bin/t3-preview"
+            install -Dm755 install.sh                      "$root/install.sh"
+            cp -r packaging                                "$root/packaging"
+            cp README.md PROTOCOL.md CONTRIBUTING.md LICENSE "$root/"
+            tar -C build --owner=0 --group=0 --numeric-owner \
+                -czf "dist/$name.tar.gz" "$name"
+          done
+
+      - name: Build .deb / .rpm / Arch packages
+        env:
+          PKG_VERSION: ${{ steps.ver.outputs.version }}
+        run: |
+          set -euo pipefail
+          # nfpm expands ${PKG_ARCH} in scalar fields but not in `contents.src`
+          # globs, so feed it one fixed staging dir per arch.
+          for arch in amd64 arm64; do
+            export PKG_ARCH="$arch"
+            rm -rf staging/current
+            cp -r "staging/bin-$arch" staging/current
+            for packager in deb rpm archlinux; do
+              nfpm package --config packaging/nfpm.yaml --packager "$packager" --target dist/
+            done
+          done
+          rm -rf staging/current
+
+      - name: Build the source tarball + render the PKGBUILD
+        env:
+          VERSION: ${{ steps.ver.outputs.version }}
+          TAG: ${{ steps.ver.outputs.tag }}
+        run: |
+          set -euo pipefail
+          src="obsbot-tiny3-linux-${VERSION}.tar.gz"
+          git archive --format=tar.gz \
+            --prefix="obsbot-tiny3-linux-${VERSION}/" \
+            -o "dist/$src" "$TAG"
+          sha="$(sha256sum "dist/$src" | cut -d' ' -f1)"
+          sed -e "s|@PKGVER@|${VERSION}|g" -e "s|@SHA256@|${sha}|g" \
+            packaging/PKGBUILD.in > dist/PKGBUILD
+          # Keep the in-repo PKGBUILD in step with the newest release.
+          cp dist/PKGBUILD packaging/PKGBUILD
+
+      - name: Generate SHA256SUMS
+        run: |
+          ( cd dist && sha256sum -- * | sort -k2 > SHA256SUMS.tmp && mv SHA256SUMS.tmp SHA256SUMS )
+          cat dist/SHA256SUMS
+
+      - name: Attest build provenance
+        uses: actions/attest-build-provenance@v2
+        with:
+          subject-path: |
+            dist/*.tar.gz
+            dist/*.deb
+            dist/*.rpm
+            dist/*.pkg.tar.zst
+            dist/SHA256SUMS
+
+      - name: Publish the release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ steps.ver.outputs.tag }}
+          VERSION: ${{ steps.ver.outputs.version }}
+        run: |
+          set -euo pipefail
+          notes=$(mktemp)
+          {
+            echo "## Install"
+            echo
+            echo 'Every asset below is covered by `SHA256SUMS` and by a'
+            echo '[Sigstore build-provenance attestation](https://docs.github.com/actions/security-guides/using-artifact-attestations).'
+            echo
+            echo '### Verify first (any asset)'
+            echo
+            echo '```bash'
+            echo "REL=https://github.com/${GITHUB_REPOSITORY}/releases/download/${TAG}"
+            echo "curl -fLO \"\$REL/obsbot-tiny3-linux-${VERSION}-x86_64-linux-musl.tar.gz\""
+            echo "curl -fLO \"\$REL/SHA256SUMS\""
+            echo 'sha256sum --check --ignore-missing SHA256SUMS'
+            echo "# and, with the gh CLI, the provenance of the build itself:"
+            echo "gh attestation verify obsbot-tiny3-linux-${VERSION}-x86_64-linux-musl.tar.gz \\"
+            echo "  --repo ${GITHUB_REPOSITORY}"
+            echo '```'
+            echo
+            echo '### Then'
+            echo
+            echo '```bash'
+            echo "tar xzf obsbot-tiny3-linux-${VERSION}-x86_64-linux-musl.tar.gz"
+            echo "cd obsbot-tiny3-linux-${VERSION}-x86_64-linux-musl"
+            echo './install.sh                       # prebuilt binaries -> ~/.local/bin, no sudo'
+            echo 'sudo ./packaging/install-root.sh   # udev rule + system config (one-time)'
+            echo '```'
+            echo
+            echo "Debian/Ubuntu users can install the \`.deb\`, Fedora/RHEL the \`.rpm\`, and"
+            echo "Arch users the \`.pkg.tar.zst\` or the published \`PKGBUILD\` (which pins the"
+            echo "source tarball below by sha256 — no \`SKIP\`)."
+            echo
+            echo '## Checksums'
+            echo
+            echo '```'
+            cat dist/SHA256SUMS
+            echo '```'
+          } > "$notes"
+
+          if gh release view "$TAG" >/dev/null 2>&1; then
+            gh release upload "$TAG" dist/* --clobber
+            gh release edit "$TAG" --notes-file "$notes"
+          else
+            gh release create "$TAG" dist/* \
+              --title "obsbot-tiny3-linux $TAG" \
+              --notes-file "$notes" \
+              --verify-tag
+          fi
+
+      - name: Commit the rendered PKGBUILD back to the default branch
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ steps.ver.outputs.tag }}
+        run: |
+          set -euo pipefail
+          if git diff --quiet -- packaging/PKGBUILD; then
+            echo "PKGBUILD unchanged; nothing to commit."
+            exit 0
+          fi
+          branch="${{ github.event.repository.default_branch }}"
+          git config user.name  'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          pkgbuild=$(mktemp); cp packaging/PKGBUILD "$pkgbuild"
+          git fetch origin "$branch"
+          git checkout -B "$branch" "origin/$branch"
+          cp "$pkgbuild" packaging/PKGBUILD
+          git add packaging/PKGBUILD
+          git commit -m "packaging: pin PKGBUILD to the $TAG source tarball checksum"
+          # Never fail the release over this bookkeeping commit.
+          git push origin "$branch" || echo "::warning::could not push the rendered PKGBUILD to $branch"

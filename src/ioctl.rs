@@ -57,9 +57,8 @@ impl VideoFd {
     /// Open the node read/write. Resumes the USB device and, while the fd is
     /// held, blocks autosuspend (so the camera can't sleep). Drop to release.
     pub fn open(path: &str) -> Result<VideoFd> {
-        let c = std::ffi::CString::new(path).map_err(|_| {
-            Error::Usage(format!("bad device path: {path}"))
-        })?;
+        let c = std::ffi::CString::new(path)
+            .map_err(|_| Error::Usage(format!("bad device path: {path}")))?;
         // O_RDWR is required for control ioctls; no O_NONBLOCK needed.
         // O_CLOEXEC so this fd — whose mere existence keeps the camera awake —
         // never leaks into a child process.
@@ -101,7 +100,10 @@ impl VideoFd {
     /// SET_CUR a (<=60 byte) payload to an XU selector, zero-padded to 60.
     pub fn xu_set(&self, unit: u8, selector: u8, data: &[u8]) -> Result<()> {
         if data.len() > 60 {
-            return Err(Error::Usage(format!("XU payload {} bytes exceeds 60", data.len())));
+            return Err(Error::Usage(format!(
+                "XU payload {} bytes exceeds 60",
+                data.len()
+            )));
         }
         let mut buf = [0u8; 60];
         buf[..data.len()].copy_from_slice(data);

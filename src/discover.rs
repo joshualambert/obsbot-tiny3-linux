@@ -18,7 +18,9 @@ pub const TINY3_LITE_PID: &str = "ff04";
 /// and Tiny 3 SE all resolve. Does NOT open the device.
 pub fn find_device() -> Result<String> {
     let entries = std::fs::read_dir(BY_ID_DIR).map_err(|e| {
-        Error::DeviceNotFound(format!("{BY_ID_DIR} unreadable ({e}) — is the camera plugged in?"))
+        Error::DeviceNotFound(format!(
+            "{BY_ID_DIR} unreadable ({e}) — is the camera plugged in?"
+        ))
     })?;
     let mut candidates: Vec<String> = Vec::new();
     for e in entries.flatten() {
@@ -62,7 +64,9 @@ pub fn usb_power_state(video_path: &str) -> Option<String> {
     for _ in 0..8 {
         let status = dir.join("power/runtime_status");
         if dir.join("busnum").exists() && status.exists() {
-            return std::fs::read_to_string(status).ok().map(|s| s.trim().to_string());
+            return std::fs::read_to_string(status)
+                .ok()
+                .map(|s| s.trim().to_string());
         }
         dir = dir.parent()?.to_path_buf();
     }

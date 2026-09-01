@@ -76,6 +76,9 @@ impl TrackMode {
         }
     }
 
+    // Deliberately not `std::str::FromStr`: an unknown mode is a plain
+    // `None` here, not an error type the caller has to name.
+    #[allow(clippy::should_implement_trait)]
     pub fn from_str(s: &str) -> Option<TrackMode> {
         Some(match s {
             "off" => TrackMode::Off,
@@ -173,7 +176,10 @@ impl Device {
     /// Open a specific node path. Holds the fd (blocks sleep).
     pub fn open_path(path: &str) -> Result<Device> {
         let fd = VideoFd::open(path)?;
-        Ok(Device { fd, path: path.to_string() })
+        Ok(Device {
+            fd,
+            path: path.to_string(),
+        })
     }
 
     pub fn path(&self) -> &str {
@@ -233,7 +239,9 @@ impl Device {
     /// 14-character device serial, via the Upgrade subsystem (safe GET).
     pub fn serial(&self) -> Result<String> {
         let r = self.transact_get(RCV_UPGRADE, CMD_GET_SN, "serial number")?;
-        Ok(String::from_utf8_lossy(&r.payload).trim_end_matches('\0').to_string())
+        Ok(String::from_utf8_lossy(&r.payload)
+            .trim_end_matches('\0')
+            .to_string())
     }
 
     /// 24-byte device UUID as hex.
@@ -247,7 +255,11 @@ impl Device {
     /// Set the AI tracking mode (or Off). Raw TLV on selector 6.
     pub fn set_tracking(&self, mode: TrackMode) -> Result<()> {
         let (category, submode) = mode.category_submode();
-        self.fd.xu_set(XU_UNIT, SEL_STATUS, &[TLV_AI_TRACK, 0x02, category, submode])
+        self.fd.xu_set(
+            XU_UNIT,
+            SEL_STATUS,
+            &[TLV_AI_TRACK, 0x02, category, submode],
+        )
     }
 
     /// Set tracking speed. EXPERIMENTAL on Tiny 3 (frame from Tiny 2 capture).
@@ -293,18 +305,29 @@ impl Device {
 
     /// Absolute pan via the standard UVC control. `deg` is clamped to ±130°.
     pub fn set_pan_deg(&self, deg: f64) -> Result<()> {
-        self.fd.set_ctrl(controls::CID_PAN_ABSOLUTE, controls::deg_to_asec(deg, controls::PAN_MAX))
+        self.fd.set_ctrl(
+            controls::CID_PAN_ABSOLUTE,
+            controls::deg_to_asec(deg, controls::PAN_MAX),
+        )
     }
 
     /// Absolute tilt via the standard UVC control. `deg` is clamped to ±90°.
     pub fn set_tilt_deg(&self, deg: f64) -> Result<()> {
-        self.fd.set_ctrl(controls::CID_TILT_ABSOLUTE, controls::deg_to_asec(deg, controls::TILT_MAX))
+        self.fd.set_ctrl(
+            controls::CID_TILT_ABSOLUTE,
+            controls::deg_to_asec(deg, controls::TILT_MAX),
+        )
     }
 
     /// Absolute zoom 0..=100 via the standard UVC control.
     pub fn set_zoom(&self, zoom: i32) -> Result<()> {
         if !(0..=100).contains(&zoom) {
-            return Err(Error::OutOfRange { what: "zoom", min: 0, max: 100, got: zoom as i64 });
+            return Err(Error::OutOfRange {
+                what: "zoom",
+                min: 0,
+                max: 100,
+                got: zoom as i64,
+            });
         }
         self.fd.set_ctrl(controls::CID_ZOOM_ABSOLUTE, zoom)
     }
@@ -331,13 +354,19 @@ impl Device {
 
     /// HDR/WDR on or off. Raw TLV on selector 6.
     pub fn set_hdr(&self, on: bool) -> Result<()> {
-        self.fd.xu_set(XU_UNIT, SEL_STATUS, &[TLV_HDR, 0x01, on as u8])
+        self.fd
+            .xu_set(XU_UNIT, SEL_STATUS, &[TLV_HDR, 0x01, on as u8])
     }
 
     /// Field of view: 0 wide(86°), 1 medium(78°), 2 narrow(65°).
     pub fn set_fov(&self, level: u8) -> Result<()> {
         if level > 2 {
-            return Err(Error::OutOfRange { what: "fov level", min: 0, max: 2, got: level as i64 });
+            return Err(Error::OutOfRange {
+                what: "fov level",
+                min: 0,
+                max: 2,
+                got: level as i64,
+            });
         }
         self.fd.xu_set(XU_UNIT, SEL_STATUS, &[TLV_FOV, 0x01, level])
     }
@@ -345,12 +374,17 @@ impl Device {
     /// Face-priority auto-exposure: false = global metering, true = face.
     /// Requires auto-exposure on.
     pub fn set_face_ae(&self, face: bool) -> Result<()> {
-        self.fd.xu_set(XU_UNIT, SEL_STATUS, &[TLV_FACE_AE, 0x01, face as u8])
+        self.fd
+            .xu_set(XU_UNIT, SEL_STATUS, &[TLV_FACE_AE, 0x01, face as u8])
     }
 
     /// Auto exposure on/off (standard UVC menu control).
     pub fn set_auto_exposure(&self, auto: bool) -> Result<()> {
-        let v = if auto { controls::EXPOSURE_AUTO_MODE } else { controls::EXPOSURE_MANUAL_MODE };
+        let v = if auto {
+            controls::EXPOSURE_AUTO_MODE
+        } else {
+            controls::EXPOSURE_MANUAL_MODE
+        };
         self.fd.set_ctrl(controls::CID_EXPOSURE_AUTO, v)
     }
 
@@ -358,9 +392,15 @@ impl Device {
     /// manual mode first.
     pub fn set_exposure(&self, value: i32) -> Result<()> {
         if !(1..=2500).contains(&value) {
-            return Err(Error::OutOfRange { what: "exposure", min: 1, max: 2500, got: value as i64 });
+            return Err(Error::OutOfRange {
+                what: "exposure",
+                min: 1,
+                max: 2500,
+                got: value as i64,
+            });
         }
-        self.fd.set_ctrl(controls::CID_EXPOSURE_AUTO, controls::EXPOSURE_MANUAL_MODE)?;
+        self.fd
+            .set_ctrl(controls::CID_EXPOSURE_AUTO, controls::EXPOSURE_MANUAL_MODE)?;
         self.fd.set_ctrl(controls::CID_EXPOSURE_ABSOLUTE, value)
     }
 
@@ -372,8 +412,15 @@ impl Device {
         let pan = self.fd.get_ctrl(controls::CID_PAN_ABSOLUTE).unwrap_or(0);
         let tilt = self.fd.get_ctrl(controls::CID_TILT_ABSOLUTE).unwrap_or(0);
         let zoom = self.fd.get_ctrl(controls::CID_ZOOM_ABSOLUTE).unwrap_or(0);
-        let auto_wb = self.fd.get_ctrl(controls::CID_AUTO_WHITE_BALANCE).unwrap_or(0) != 0;
-        let wb_temp = self.fd.get_ctrl(controls::CID_WHITE_BALANCE_TEMPERATURE).unwrap_or(0);
+        let auto_wb = self
+            .fd
+            .get_ctrl(controls::CID_AUTO_WHITE_BALANCE)
+            .unwrap_or(0)
+            != 0;
+        let wb_temp = self
+            .fd
+            .get_ctrl(controls::CID_WHITE_BALANCE_TEMPERATURE)
+            .unwrap_or(0);
         let ae = self.fd.get_ctrl(controls::CID_EXPOSURE_AUTO).unwrap_or(0);
         Ok(Status {
             asleep: s[ST_SLEEP] != 0,

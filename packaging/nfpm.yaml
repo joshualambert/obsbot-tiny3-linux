@@ -1,0 +1,76 @@
+# nfpm config used by .github/workflows/release.yml to build the .deb, .rpm and
+# Arch packages for a tagged release. PKG_ARCH (amd64|arm64) and PKG_VERSION are
+# supplied by the workflow; the binaries come from the per-arch build jobs.
+#
+# Build one locally with:
+#   cp -r staging/bin-amd64 staging/current
+#   PKG_ARCH=amd64 PKG_VERSION=0.1.0 nfpm package -f packaging/nfpm.yaml -p deb -t dist/
+name: obsbot-tiny3-linux
+arch: ${PKG_ARCH}
+platform: linux
+version: ${PKG_VERSION}
+section: utils
+priority: optional
+maintainer: Josh Lambert <joshualambert@users.noreply.github.com>
+vendor: obsbot-tiny3-linux
+homepage: https://github.com/joshualambert/obsbot-tiny3-linux
+license: MIT
+description: |
+  Linux control suite for the OBSBOT Tiny 3 series webcam.
+  Sleep/wake, AI tracking, gimbal (PTZ), white balance, HDR and FOV over the
+  camera's UVC extension unit, plus a white-balance guard daemon and optional
+  Omarchy/Hyprland integration. The binaries are statically linked (musl).
+
+# The binaries are static, so there is no runtime library dependency. mpv is
+# only needed by the optional `t3-preview` self-view window.
+recommends:
+  - mpv
+suggests:
+  - v4l-utils
+
+contents:
+  - src: ./staging/current/t3ctl
+    dst: /usr/bin/t3ctl
+  - src: ./staging/current/t3-wb-guard
+    dst: /usr/bin/t3-wb-guard
+  - src: ./bin/t3-preview
+    dst: /usr/bin/t3-preview
+
+  # Per-user systemd unit: systemctl --user enable --now t3-wb-guard.service
+  - src: ./packaging/systemd/t3-wb-guard.service
+    dst: /usr/lib/systemd/user/t3-wb-guard.service
+
+  # udev: group access + the cold-plug white-balance pin
+  - src: ./packaging/udev/71-obsbot-tiny3.rules
+    dst: /usr/lib/udev/rules.d/71-obsbot-tiny3.rules
+
+  - src: ./packaging/config.example
+    dst: /etc/obsbot-tiny3/config
+    type: config|noreplace
+
+  # Example Hyprland/Omarchy snippets — copied by the user, never auto-applied.
+  - src: ./packaging/hypr/obsbot-tiny3.conf
+    dst: /usr/share/obsbot-tiny3-linux/hypr/obsbot-tiny3.conf
+  - src: ./packaging/hypr/bindings.omarchy.lua
+    dst: /usr/share/obsbot-tiny3-linux/hypr/bindings.omarchy.lua
+  - src: ./packaging/hypr/windows.omarchy.lua
+    dst: /usr/share/obsbot-tiny3-linux/hypr/windows.omarchy.lua
+  - src: ./packaging/omarchy-menu.jsonc
+    dst: /usr/share/obsbot-tiny3-linux/omarchy/omarchy-menu.jsonc
+
+  - src: ./README.md
+    dst: /usr/share/doc/obsbot-tiny3-linux/README.md
+  - src: ./PROTOCOL.md
+    dst: /usr/share/doc/obsbot-tiny3-linux/PROTOCOL.md
+  - src: ./packaging/config.example
+    dst: /usr/share/doc/obsbot-tiny3-linux/config.example
+  - src: ./LICENSE
+    dst: /usr/share/licenses/obsbot-tiny3-linux/LICENSE
+
+rpm:
+  group: Applications/System
+deb:
+  fields:
+    Bugs: https://github.com/joshualambert/obsbot-tiny3-linux/issues
+archlinux:
+  pkgbase: obsbot-tiny3-linux

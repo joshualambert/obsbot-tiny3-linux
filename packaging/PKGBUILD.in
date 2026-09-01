@@ -1,6 +1,11 @@
 # Maintainer: Josh Lambert
+#
+# TEMPLATE. The release workflow renders this into the real PKGBUILD for each
+# tag: @PKGVER@ becomes the version and @SHA256@ the sha256 of that release's
+# source tarball. The rendered file is published as a release asset and
+# committed back to packaging/PKGBUILD — never edit that copy by hand.
 pkgname=obsbot-tiny3-linux
-pkgver=0.1.0
+pkgver=@PKGVER@
 pkgrel=1
 pkgdesc="Linux control suite for the OBSBOT Tiny 3 series webcam (sleep/wake, AI tracking, gimbal, white balance)"
 arch=('x86_64' 'aarch64')
@@ -10,8 +15,10 @@ depends=('gcc-libs')
 makedepends=('cargo')
 optdepends=('v4l-utils: manual UVC control inspection')
 backup=('etc/obsbot-tiny3/config')
-source=("$pkgname-$pkgver.tar.gz::$url/archive/refs/tags/v$pkgver.tar.gz")
-sha256sums=('SKIP')  # replace with the release tarball checksum on publish
+# Pinned to the release asset we publish and checksum ourselves, not to
+# GitHub's auto-generated /archive/ tarball (which GitHub can regenerate).
+source=("$pkgname-$pkgver.tar.gz::$url/releases/download/v$pkgver/$pkgname-$pkgver.tar.gz")
+sha256sums=('@SHA256@')
 
 prepare() {
     cd "$pkgname-$pkgver"

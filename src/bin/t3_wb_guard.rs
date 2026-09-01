@@ -48,7 +48,9 @@ fn main() {
                 Some(s) => match s.parse() {
                     Ok(v) => temp = v,
                     Err(_) => {
-                        eprintln!("t3-wb-guard: invalid --temp value '{s}' (expected Kelvin integer)");
+                        eprintln!(
+                            "t3-wb-guard: invalid --temp value '{s}' (expected Kelvin integer)"
+                        );
                         std::process::exit(2);
                     }
                 },
@@ -81,7 +83,8 @@ fn main() {
         let clamped = temp.clamp(controls::WB_TEMP_MIN, controls::WB_TEMP_MAX);
         eprintln!(
             "t3-wb-guard: temperature {temp}K out of range {}..{}, using {clamped}K",
-            controls::WB_TEMP_MIN, controls::WB_TEMP_MAX
+            controls::WB_TEMP_MIN,
+            controls::WB_TEMP_MAX
         );
         temp = clamped;
     }
@@ -284,7 +287,11 @@ fn wait_for_open(real: &str, timeout: Duration) -> OpenWait {
 }
 
 fn poll_inotify(ino: RawFd, timeout: Duration) -> OpenWait {
-    let mut pfd = libc::pollfd { fd: ino, events: libc::POLLIN, revents: 0 };
+    let mut pfd = libc::pollfd {
+        fd: ino,
+        events: libc::POLLIN,
+        revents: 0,
+    };
     let ms = timeout.as_millis().min(i32::MAX as u128) as libc::c_int;
     let r = unsafe { libc::poll(&mut pfd, 1, ms) };
     if r < 0 {
@@ -306,14 +313,15 @@ fn poll_inotify(ino: RawFd, timeout: Duration) -> OpenWait {
     let n = n as usize;
     let mut off = 0usize;
     let header = std::mem::size_of::<libc::inotify_event>(); // 16 bytes
-    // Drain the whole batch before classifying. Device-gone wins over an open
-    // (a delete anywhere in the batch means the node is going away), so we scan
-    // all events rather than returning on the first IN_OPEN.
+                                                             // Drain the whole batch before classifying. Device-gone wins over an open
+                                                             // (a delete anywhere in the batch means the node is going away), so we scan
+                                                             // all events rather than returning on the first IN_OPEN.
     let mut saw_open = false;
     while off + header <= n {
         // Fields: wd(i32) mask(u32) cookie(u32) len(u32)
         let mask = u32::from_ne_bytes([buf[off + 4], buf[off + 5], buf[off + 6], buf[off + 7]]);
-        let len = u32::from_ne_bytes([buf[off + 12], buf[off + 13], buf[off + 14], buf[off + 15]]) as usize;
+        let len = u32::from_ne_bytes([buf[off + 12], buf[off + 13], buf[off + 14], buf[off + 15]])
+            as usize;
         if mask & (IN_DELETE_SELF | IN_IGNORED) != 0 {
             return OpenWait::Gone;
         }
