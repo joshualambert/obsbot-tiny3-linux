@@ -29,6 +29,19 @@ echo "==> building release binaries"
 echo "==> installing binaries to $BINDIR"
 install -Dm755 "$REPO/target/release/t3ctl" "$BINDIR/t3ctl"
 install -Dm755 "$REPO/target/release/t3-wb-guard" "$BINDIR/t3-wb-guard"
+install -Dm755 "$REPO/bin/t3-preview" "$BINDIR/t3-preview"
+
+# Omarchy Quickshell bar widget (camera control + live preview). Harmless on
+# non-Omarchy systems — it just sits unused unless added to the bar.
+if [[ -d "$HOME/.config/omarchy" ]]; then
+    echo "==> installing Omarchy bar-widget plugin (obsbot.tiny3)"
+    dest="$HOME/.config/omarchy/plugins/obsbot.tiny3"
+    mkdir -p "$dest"
+    cp "$REPO/packaging/omarchy/plugins/obsbot.tiny3/"* "$dest/"
+    echo "    enable it with:  omarchy plugin enable obsbot.tiny3"
+    echo "    then add {\"id\": \"obsbot.tiny3\"} to the bar 'right' list in ~/.config/omarchy/shell.json"
+    echo "    keybindings + preview window rule: see packaging/hypr/*.lua"
+fi
 
 # No config is seeded here: the guard defaults to 4000K, and the system-wide
 # default lives at /etc/obsbot-tiny3/config (installed by install-root.sh). Only

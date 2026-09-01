@@ -1,0 +1,20 @@
+{
+  "schemaVersion": 1,
+  "id": "obsbot.tiny3",
+  "name": "OBSBOT Tiny 3",
+  "version": "1.0.0",
+  "author": "obsbot-tiny3-linux",
+  "description": "OBSBOT Tiny 3 camera control: sleep/wake, AI tracking, white balance, and a live preview",
+  "kinds": [
+    "bar-widget"
+  ],
+  "entryPoints": {
+    "barWidget": "Panel.qml"
+  },
+  "barWidget": {
+    "displayName": "OBSBOT Camera",
+    "description": "Sleep/wake, AI tracking, white balance, HDR, recenter, and a live preview",
+    "category": "System",
+    "allowMultiple": false
+  }
+}

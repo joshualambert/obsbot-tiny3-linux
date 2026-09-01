@@ -1,0 +1,48 @@
+#!/usr/bin/env bash
+# Live self-view preview of the OBSBOT Tiny 3 in a small floating mpv window.
+#
+# Streaming the camera wakes it (LED on, gimbal live); closing the window
+# releases the device so it can autosuspend/sleep again. Single instance:
+# a second invocation focuses the existing window instead of opening another.
+#
+# The window carries a dedicated Wayland app-id (obsbot-tiny3-preview) so the
+# Hyprland rule in packaging/hypr/windows.omarchy.lua can float, size, pin and
+# corner-position it, and so it dodges the compositor's generic mpv rules.
+set -euo pipefail
+
+APPID=obsbot-tiny3-preview
+# Match the actual mpv process, not any command line that merely mentions the
+# app-id (e.g. this script, or a shell running it) — pgrep/pkill -f matches
+# substrings anywhere in the cmdline.
+MATCH="mpv .*--wayland-app-id=$APPID"
+
+# Toggle: if a preview is already up, a second call closes it (nice for a
+# keybind/button that both opens and dismisses). Prefer a precise Hyprland
+# close-by-class; fall back to killing the mpv process.
+if pgrep -f -- "$MATCH" >/dev/null 2>&1; then
+    command -v hyprctl >/dev/null 2>&1 && hyprctl dispatch closewindow "class:^${APPID}$" >/dev/null 2>&1 || true
+    sleep 0.2
+    pgrep -f -- "$MATCH" >/dev/null 2>&1 && pkill -f -- "$MATCH" 2>/dev/null || true
+    exit 0
+fi
+
+DEV=$(ls /dev/v4l/by-id/*OBSBOT_Tiny_3*index0 2>/dev/null | head -1 || true)
+if [[ -z "${DEV:-}" ]]; then
+    command -v notify-send >/dev/null && \
+        notify-send -a OBSBOT "OBSBOT Tiny 3" "No camera found (unplugged?)"
+    echo "t3-preview: no OBSBOT Tiny 3 camera found under /dev/v4l/by-id" >&2
+    exit 1
+fi
+
+exec mpv \
+    --wayland-app-id="$APPID" \
+    --title="OBSBOT Tiny 3 preview" \
+    --force-window=immediate \
+    --profile=low-latency \
+    --no-osc --no-osd-bar --osd-level=0 \
+    --no-input-default-bindings \
+    --input-conf=/dev/null \
+    --cursor-autohide=always \
+    --keepaspect=yes \
+    --demuxer-lavf-o=input_format=mjpeg,video_size=1280x720 \
+    "av://v4l2:$DEV"
