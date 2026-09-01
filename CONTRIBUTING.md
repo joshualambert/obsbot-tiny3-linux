@@ -9,19 +9,25 @@ This suite is verified on an **OBSBOT Tiny 3 Lite** (`3564:ff04`). The Tiny 3
 and Tiny 3 SE almost certainly speak the same protocol, but we haven't confirmed
 it on real hardware. If you own one, please help:
 
-1. **Find your USB product ID:**
+1. **Find your USB product ID** (paired with the vendor, per device):
    ```bash
-   cat /sys/bus/usb/devices/*/idVendor /sys/bus/usb/devices/*/idProduct 2>/dev/null
+   for d in /sys/bus/usb/devices/*/idVendor; do
+     [ "$(cat "$d")" = 3564 ] && echo "3564:$(cat "${d%idVendor}idProduct")"
+   done
    # or, if you have usbutils:
    lsusb | grep -i remo
    ```
    The vendor is `3564` (Remo Tech). Note the 4-hex-digit product ID.
 
-2. **Try the safe, read-only commands first** (these don't move anything):
+2. **Try the low-impact commands first** (these don't move the gimbal):
    ```bash
+   t3ctl power     # truly read-only — reads sysfs, opens nothing
+   t3ctl status    # reads camera state; does NOT wake a sleeping camera
    t3ctl info      # serial + UUID
-   t3ctl status    # full state — should NOT wake a sleeping camera
    ```
+   Note: `status`/`info` do send a vendor request *frame* to the camera's
+   command mailbox (a documented, non-destructive GET on the Tiny 2). Only
+   `t3ctl power` touches nothing on the device.
 
 3. **Then the fun ones**, watching the camera:
    ```bash

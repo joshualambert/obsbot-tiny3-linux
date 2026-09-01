@@ -107,6 +107,20 @@ never by a reply.
 
 Byte order note: `cmd` bytes on the wire are little-endian, e.g. sleep = `C2 A0`.
 
+### Experimental commands (implemented, NOT verified on this unit)
+
+Carried from the Tiny 2 protocol and implemented in the code, but not exercised
+against this camera — treat as unverified:
+
+| Feature | flags | cmd | receiver | payload |
+|---|---|---|---|---|
+| Gimbal move-to-angle | `0x25` | `0x6444` | `0x04` | roll, pitch, yaw — 3× float32 LE (motor degrees) |
+| Tracking speed | `0x25` | `0x0CC4` | `0x04` | `00` standard / `02` sport |
+
+Absolute pan/tilt via the standard UVC controls (`t3ctl pan`/`tilt`) is the
+verified path for positioning; `gimbal_move` is kept only as a documented
+alternative.
+
 ### Raw-TLV commands (selector 0x06) — CONFIRMED
 
 Distinct from framed V3: write a raw `[tag][len][value…]` zero-padded to 60
@@ -119,8 +133,8 @@ Payload is always `[tag, 0x02_or_0x01, ...]` zero-padded to 60.
 |---|---|---|---|
 | `0x16` | AI tracking | `[0x02, category, submode]` (see below) | ✅ verified; status byte `0x18`=category, `0x1c`=submode |
 | `0x01` | HDR / WDR | `[0x01, on]` | ✅ toggles (status byte `0x06`) |
-| `0x03` | face-priority AE | `[0x01, mode]` — 0 global / 1 face (needs auto-exposure on) | command accepted |
-| `0x04` | field of view | `[0x01, level]` — 0 wide 86° · 1 med 78° · 2 narrow 65° | command accepted |
+| `0x03` | face-priority AE | `[0x01, mode]` — 0 global / 1 face (needs auto-exposure on) | ⚠️ command accepted; not visually verified |
+| `0x04` | field of view | `[0x01, level]` — 0 wide 86° · 1 med 78° · 2 narrow 65° | ✅ **frame-verified** (narrow is a visibly tighter crop than wide) |
 
 **AI tracking mode encoding** — `16 02 <category> <submode>`, reconciled from
 Tiny4Linux + lxman and confirmed live. The category byte is what status byte
@@ -165,20 +179,22 @@ number and every control read/write fails. Correct values on x86_64:
 ### Status block (selector 0x06 GET_CUR) decode
 
 Live blob observed: `2e0100020000000100 01 78 0000 01 01 …`. Decoded offsets
-(from Tiny4Linux status.rs, confirmed reacting on this unit):
+(offsets from Tiny4Linux status.rs):
 
-| Offset | Field | Observed |
+| Offset | Field | Status |
 |---|---|---|
-| `0x02` | sleep (0=awake, 1=sleep) | `00` awake |
-| `0x06` | HDR (bool) | `00` |
-| `0x18` | AI mode enable | `00` idle → `02` when tracking on |
-| `0x1c` | AI framing | `00` |
-| `0x21` | tracking speed (0=std, 2=sport) | `00` |
+| `0x02` | sleep (0=awake, 1=sleep) | ✅ reacts (`00` awake / `01` asleep) |
+| `0x06` | HDR (bool) | ✅ reacts to the HDR TLV |
+| `0x18` | AI mode enable | ✅ `00` idle → `02` when human-tracking on |
+| `0x1c` | AI framing | ✅ tracks the submode |
+| `0x21` | tracking speed (0=std, 2=sport) | ⚠️ not exercised — `set_track_speed` is experimental |
 
-**Verification catch-22:** the sleep byte can only be read by opening the video
-node, which itself may wake the camera. So the status block is **not** a
-reliable sleep indicator — the physical LED / gimbal park is the ground truth
-(see Probe log).
+**Reading the status block does not wake the camera.** It is a control GET, not
+a stream, so it can be read on a *sleeping* camera and leaves it asleep
+(verified: read `sleep=1` four times over ~6 s and it stayed asleep; only the
+vendor `wake` command cleared it). So the status block **is** a usable sleep
+indicator — this supersedes an earlier note here that claimed reading it might
+wake the camera.
 
 ## Standard UVC controls (verified via `v4l2-ctl --list-ctrls-menus`)
 
@@ -283,3 +299,5 @@ in such a room. Keep target temperature configurable.
 | 2026-08-31 | WB manual 4000K pin (auto=0, pause, temp last) | ✅ clean image, red/blue stayed 127, no neon-green |
 | 2026-08-31 | AI track normal/upper, HDR on/off via t3ctl | ✅ status round-trip confirms each |
 | 2026-08-31 | t3-wb-guard integration | ✅ zero-fd idle (camera suspends), re-pins WB within ~4s of an app flipping it to auto |
+| 2026-08-31 | FOV wide vs narrow TLV `04 01 00`/`04 01 02` | ✅ frame-verified: narrow is a visibly tighter crop than wide |
+| 2026-08-31 | Status GET ×4 on a sleeping camera | ✅ stayed `sleep=1` across ~6 s; control reads don't wake it |

@@ -145,6 +145,10 @@ These cost real time to discover; they are documented in full in
    stream (a browser, ffmpeg) wakes it.
 3. **Pan/tilt readback is cached by uvcvideo**, so `recenter` is done via the
    UVC pan/tilt controls (not the vendor recenter frame) to keep readback honest.
+   One consequence: after **AI tracking** physically moves the gimbal, the UVC
+   readback still shows the last host-commanded angle, so `t3ctl status` and
+   `preset save` reflect that cached value, not where tracking actually pointed.
+   Save presets from a position you set with `t3ctl pan/tilt`, not mid-track.
 
 ## How it works
 
