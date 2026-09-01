@@ -189,12 +189,9 @@ jobs:
       - name: Attest build provenance
         uses: actions/attest-build-provenance@v2
         with:
-          subject-path: |
-            dist/*.tar.gz
-            dist/*.deb
-            dist/*.rpm
-            dist/*.pkg.tar.zst
-            dist/SHA256SUMS
+          # Everything published, no exceptions — an explicit per-format list
+          # silently skipped the rendered PKGBUILD in v0.1.0.
+          subject-path: dist/*
 
       - name: Publish the release
         env:
