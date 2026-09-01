@@ -1,0 +1,63 @@
+# Maintainer: Josh Lambert
+pkgname=obsbot-tiny3-linux
+pkgver=0.1.0
+pkgrel=1
+pkgdesc="Linux control suite for the OBSBOT Tiny 3 series webcam (sleep/wake, AI tracking, gimbal, white balance)"
+arch=('x86_64' 'aarch64')
+url="https://github.com/joshlambert/obsbot-tiny3-linux"
+license=('MIT')
+depends=('gcc-libs')
+makedepends=('cargo')
+optdepends=('v4l-utils: manual UVC control inspection')
+backup=('etc/obsbot-tiny3/config')
+source=("$pkgname-$pkgver.tar.gz::$url/archive/refs/tags/v$pkgver.tar.gz")
+sha256sums=('SKIP')  # replace with the release tarball checksum on publish
+
+prepare() {
+    cd "$pkgname-$pkgver"
+    export RUSTUP_TOOLCHAIN=stable
+    cargo fetch --locked --target "$(rustc -vV | sed -n 's/host: //p')"
+}
+
+build() {
+    cd "$pkgname-$pkgver"
+    export RUSTUP_TOOLCHAIN=stable
+    export CARGO_TARGET_DIR=target
+    cargo build --release --frozen
+}
+
+check() {
+    cd "$pkgname-$pkgver"
+    export RUSTUP_TOOLCHAIN=stable
+    cargo test --release --frozen
+}
+
+package() {
+    cd "$pkgname-$pkgver"
+
+    install -Dm755 target/release/t3ctl "$pkgdir/usr/bin/t3ctl"
+    install -Dm755 target/release/t3-wb-guard "$pkgdir/usr/bin/t3-wb-guard"
+
+    # Per-user systemd unit (enable with: systemctl --user enable --now t3-wb-guard)
+    install -Dm644 packaging/systemd/t3-wb-guard.service \
+        "$pkgdir/usr/lib/systemd/user/t3-wb-guard.service"
+
+    # udev: group access + cold-plug WB pin
+    install -Dm644 packaging/udev/99-obsbot-tiny3.rules \
+        "$pkgdir/usr/lib/udev/rules.d/99-obsbot-tiny3.rules"
+
+    # Default system config (used by the root/udev context); marked as backup.
+    install -Dm644 packaging/config.example "$pkgdir/etc/obsbot-tiny3/config"
+
+    # Example Hyprland keybindings (user copies snippets they want)
+    install -Dm644 packaging/hypr/obsbot-tiny3.conf \
+        "$pkgdir/usr/share/obsbot-tiny3-linux/hypr/obsbot-tiny3.conf"
+
+    # Docs
+    install -Dm644 README.md "$pkgdir/usr/share/doc/$pkgname/README.md"
+    install -Dm644 PROTOCOL.md "$pkgdir/usr/share/doc/$pkgname/PROTOCOL.md"
+    install -Dm644 packaging/config.example \
+        "$pkgdir/usr/share/doc/$pkgname/config.example"
+
+    install -Dm644 LICENSE "$pkgdir/usr/share/licenses/$pkgname/LICENSE"
+}

@@ -113,12 +113,54 @@ Distinct from framed V3: write a raw `[tag][len][value…]` zero-padded to 60
 bytes directly to selector `0x06` (no magic, no CRC). Effect shows in the
 status block.
 
+Payload is always `[tag, 0x02_or_0x01, ...]` zero-padded to 60.
+
 | Tag | Control | Value | Result |
 |---|---|---|---|
-| `0x16` | AI tracking | `[enable][framing]`: enable `0x02` on / `0x00` off; framing 0=normal 1=upper-body 2=close-up 3=headless 4=lower-body | ✅ `16 02 02 00` enabled tracking; status byte `0x18` → `02`, frame showed re-framing |
-| `0x01` | HDR / WDR | `0`/`1` | not yet tested |
-| `0x03` | face-priority AE | `0` global / `1` face (needs auto-exposure on) | not yet tested |
-| `0x04` | field of view | `0` wide 86° · `1` med 78° · `2` narrow 65° | not yet tested |
+| `0x16` | AI tracking | `[0x02, category, submode]` (see below) | ✅ verified; status byte `0x18`=category, `0x1c`=submode |
+| `0x01` | HDR / WDR | `[0x01, on]` | ✅ toggles (status byte `0x06`) |
+| `0x03` | face-priority AE | `[0x01, mode]` — 0 global / 1 face (needs auto-exposure on) | command accepted |
+| `0x04` | field of view | `[0x01, level]` — 0 wide 86° · 1 med 78° · 2 narrow 65° | command accepted |
+
+**AI tracking mode encoding** — `16 02 <category> <submode>`, reconciled from
+Tiny4Linux + lxman and confirmed live. The category byte is what status byte
+`0x18` reports back:
+
+| Mode | category | submode | bytes |
+|---|---|---|---|
+| Off | 0 | 0 | `16 02 00 00` |
+| Human, normal | 2 | 0 | `16 02 02 00` |
+| Human, upper body | 2 | 1 | `16 02 02 01` |
+| Human, close-up | 2 | 2 | `16 02 02 02` |
+| Human, headless | 2 | 3 | `16 02 02 03` |
+| Human, lower body | 2 | 4 | `16 02 02 04` |
+| Group | 1 | 0 | `16 02 01 00` |
+| Hand | 3 | 0 | `16 02 03 00` |
+| Whiteboard | 4 | 0 | `16 02 04 00` |
+| Desk | 5 | 0 | `16 02 05 00` |
+
+## Standard UVC controls — two gotchas for Linux implementers
+
+**GETs do NOT wake the camera; streaming does.** A framed V3 GET, an XU status
+GET, and `VIDIOC_G_CTRL` reads all work on a *sleeping* camera and leave it
+asleep (verified: read `sleep=1`, then `wake` cleared it — the read didn't wake
+it). What wakes the camera is starting a *stream* (`VIDIOC_STREAMON`, i.e. any
+capture — ffmpeg, a browser, `v4l2-ctl --stream-mmap`). So a status/identity
+tool is safe to run against a sleeping camera; only capture wakes it.
+
+**Pan/tilt readback is cached by uvcvideo.** `VIDIOC_G_CTRL` on
+`pan_absolute`/`tilt_absolute` returns the last value the *driver* wrote, not a
+live hardware read (uvcvideo caches controls lacking the AUTO_UPDATE quirk). So
+after a vendor recenter frame (`0x00C3`), the gimbal physically centers but the
+UVC readback still reports the old angle. `t3ctl` implements recenter as UVC
+`pan=0`/`tilt=0` instead, which both moves the gimbal and keeps readback honest.
+
+**ioctl-number gotcha (cost real time here):** `VIDIOC_G_CTRL`/`S_CTRL` are
+`_IOWR('V', 27, …)` / `_IOWR('V', 28, …)` — 27 and 28 are **decimal** (`0x1B`,
+`0x1C`). Written as if hex (`0x27`/`0x28`) the ioctl silently targets the wrong
+number and every control read/write fails. Correct values on x86_64:
+`VIDIOC_G_CTRL = 0xC008561B`, `VIDIOC_S_CTRL = 0xC008561C`,
+`UVCIOC_CTRL_QUERY = 0xC0107521`.
 
 ### Status block (selector 0x06 GET_CUR) decode
 
@@ -190,11 +232,15 @@ neon-green image). **Control readbacks look correct while the image is
 broken** — never trust readback alone; verify with a captured frame.
 `white_balance_automatic=1` is always a safe, watchable fallback.
 
-### 2. Any open of the video node wakes the camera
+### 2. Streaming wakes the camera; plain control reads do not
 
-Including `v4l2-ctl --get-ctrl` and V4L2 event subscriptions. The LED comes on
-and the gimbal goes live. Idle monitoring must hold **no** fd — inotify on the
-node works (it doesn't open the device).
+**Refined by testing.** *Starting a capture stream* wakes the camera (LED on,
+gimbal live) — ffmpeg, a browser, any `VIDIOC_STREAMON`. But merely opening the
+node for **control** ioctls (`VIDIOC_G_CTRL`, XU GET/SET, framed vendor GETs)
+does **not** wake a sleeping camera — those reads work while it sleeps and leave
+it asleep. So `t3ctl status`/`info` are safe on a sleeping camera; only capture
+wakes it. Idle *monitoring* still must hold **no** fd so USB autosuspend can
+engage — inotify on the node works (it doesn't open the device).
 
 This firmware has no self-sleep: the camera sleeps only via USB runtime
 autosuspend (`/sys/bus/usb/devices/<port>/power/control` = `auto`), which
@@ -231,3 +277,9 @@ in such a room. Keep target temperature configurable.
 | 2026-08-31 | Gimbal recenter cmd 0xC300 receiver 0x03 | ✅ frame-verified return to centered view |
 | 2026-08-31 | Sleep cmd 0xA0C2 payload 01000000 | ✅ **verified**: LED off, gimbal parked (physical observation) |
 | 2026-08-31 | Wake cmd 0xA0C2 payload 00000000 | ✅ **verified**: LED on, gimbal lifted back up (physical observation) |
+| 2026-08-31 | Status GET on a sleeping camera | ✅ read `sleep=1` without waking it; only `wake` cleared it — GETs don't wake |
+| 2026-08-31 | UVC pan 20°/tilt 10°/zoom 60 | ✅ frame-verified gimbal moved; readback matched |
+| 2026-08-31 | recenter via UVC pan=0/tilt=0 | ✅ frame-verified centered; readback honest (vendor 0x00C3 desyncs the cache) |
+| 2026-08-31 | WB manual 4000K pin (auto=0, pause, temp last) | ✅ clean image, red/blue stayed 127, no neon-green |
+| 2026-08-31 | AI track normal/upper, HDR on/off via t3ctl | ✅ status round-trip confirms each |
+| 2026-08-31 | t3-wb-guard integration | ✅ zero-fd idle (camera suspends), re-pins WB within ~4s of an app flipping it to auto |

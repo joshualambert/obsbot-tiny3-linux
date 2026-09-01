@@ -37,6 +37,7 @@ GIMBAL
 IMAGE
     wb auto               Auto white balance (safe fallback)
     wb temp <2000..10000> Manual white-balance temperature (Kelvin)
+    wb pin                Pin manual WB to the configured target (config file)
     hdr on|off            HDR / WDR
     fov wide|medium|narrow
     exposure auto         Auto exposure
@@ -114,13 +115,18 @@ fn run(mut args: Vec<String>) -> Result<()> {
         "wake" => open()?.wake(),
         "toggle" => {
             let dev = open()?;
-            // Opening already woke it; read the vendor sleep bit to decide.
+            // Reading the vendor sleep bit does NOT wake the camera, so we can
+            // decide without disturbing a sleeping camera. Print the resulting
+            // state so a keybinding can surface it in a notification.
             let st = dev.status()?;
             if st.asleep {
-                dev.wake()
+                dev.wake()?;
+                println!("awake");
             } else {
-                dev.sleep()
+                dev.sleep()?;
+                println!("asleep");
             }
+            Ok(())
         }
         "status" => cmd_status(&open()?, json),
         "info" => cmd_info(&open()?, json),
@@ -192,7 +198,19 @@ fn cmd_info(dev: &Device, json: bool) -> Result<()> {
 }
 
 fn cmd_track(dev: &Device, rest: &[String]) -> Result<()> {
-    let arg = rest.first().ok_or_else(|| Error::Usage("track needs on|off|<mode>|speed".into()))?;
+    let arg = rest.first().ok_or_else(|| Error::Usage("track needs on|off|toggle|<mode>|speed".into()))?;
+    if arg == "toggle" {
+        let on = dev.status()?.tracking != TrackMode::Off;
+        return if on {
+            dev.set_tracking(TrackMode::Off)?;
+            println!("off");
+            Ok(())
+        } else {
+            dev.set_tracking(TrackMode::Normal)?;
+            println!("on");
+            Ok(())
+        };
+    }
     if arg == "speed" {
         let s = rest.get(1).map(String::as_str);
         return match s {
@@ -246,7 +264,13 @@ fn cmd_wb(dev: &Device, rest: &[String]) -> Result<()> {
             let t = need_i32(&rest[1.min(rest.len())..], "white balance temperature")?;
             dev.set_wb_temp(t)
         }
-        _ => Err(Error::Usage(format!("wb auto | wb temp <{}..{}>", controls::WB_TEMP_MIN, controls::WB_TEMP_MAX))),
+        // Pin to the configured target temperature (single source of truth for
+        // the udev cold-plug hook — reads ~/.config or /etc/obsbot-tiny3/config).
+        Some("pin") => dev.set_wb_temp(config::Config::load().wb_temp),
+        _ => Err(Error::Usage(format!(
+            "wb auto | wb temp <{}..{}> | wb pin",
+            controls::WB_TEMP_MIN, controls::WB_TEMP_MAX
+        ))),
     }
 }
 

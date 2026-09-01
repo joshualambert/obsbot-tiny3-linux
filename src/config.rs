@@ -51,12 +51,20 @@ fn parse(text: &str) -> BTreeMap<String, String> {
 
 impl Config {
     /// Load config, falling back to defaults for anything missing/absent.
+    ///
+    /// Search order: `$XDG_CONFIG_HOME/obsbot-tiny3/config` (per-user), then
+    /// `/etc/obsbot-tiny3/config` (system-wide, used by the root/udev context).
+    /// The first file that exists wins; missing keys keep their defaults.
     pub fn load() -> Config {
         let mut c = Config::default();
-        if let Ok(text) = std::fs::read_to_string(config_path()) {
-            let m = parse(&text);
-            if let Some(v) = m.get("wb_temp").and_then(|s| s.parse().ok()) {
-                c.wb_temp = v;
+        let candidates = [config_path(), PathBuf::from("/etc/obsbot-tiny3/config")];
+        for path in candidates {
+            if let Ok(text) = std::fs::read_to_string(&path) {
+                let m = parse(&text);
+                if let Some(v) = m.get("wb_temp").and_then(|s| s.parse().ok()) {
+                    c.wb_temp = v;
+                }
+                break;
             }
         }
         c

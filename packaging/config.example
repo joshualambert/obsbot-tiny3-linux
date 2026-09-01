@@ -1,0 +1,8 @@
+# obsbot-tiny3 configuration.
+# Install to ~/.config/obsbot-tiny3/config (per-user) or /etc/obsbot-tiny3/config
+# (system-wide, used by the udev cold-plug hook running as root).
+
+# Target white-balance temperature (Kelvin, 2000..10000) that t3-wb-guard
+# re-pins to and that `t3ctl wb pin` uses. 4000K is a good baseline for a
+# green-walled office where the camera's auto WB overcorrects.
+wb_temp = 4000
