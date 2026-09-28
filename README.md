@@ -167,7 +167,8 @@ CLI and guard operations share a lock so they cannot overwrite one another
 mid-command. Commands check camera readback and report failures; a saved
 setting remains pending if firmware rejects it, and the guard retries.
 
-- `t3ctl wake`: stay awake, including without a video preview, until Sleep/Auto.
+- `t3ctl wake`: disable firmware auto-sleep and stay awake, including without a
+  video preview, until Sleep/Auto.
 - `t3ctl sleep`: explicit sleep overrides active calls and firmware wake attempts.
 - `t3ctl auto`: wake when an app uses video **or the camera microphone**; release
   the keep-awake descriptor when idle. This is the default for existing configs.
@@ -177,6 +178,14 @@ setting remains pending if firmware rejects it, and the guard retries.
 The guard matches ALSA capture to the same physical USB device as the camera,
 so changing sound-card numbers or using a different microphone is safe. It
 reads capture activity from procfs; it does not record or start video capture.
+The firmware auto-sleep timer is separate from USB autosuspend: microphone
+capture and an open video control descriptor do not prevent its countdown.
+Whenever Awake or an active Auto call requires the camera awake, the guard
+sets this timer to zero and verifies readback. It rechecks the timer during use
+so an app/firmware reset cannot silently restore timed sleep. The timer is not
+restored when leaving active use; explicit Sleep and USB idle suspend still work.
+`t3ctl status --json` reports `auto_sleep_seconds` (zero means disabled).
+
 Defaults are tracking off and manual WB at 4000K. HDR remains unmanaged until
 explicitly selected. Power transitions wait for vendor readback.
 

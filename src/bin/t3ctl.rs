@@ -137,7 +137,7 @@ fn run(mut args: Vec<String>) -> Result<()> {
             config::save_setting("power", "sleep")
         }
         "wake" => {
-            open()?.wake()?;
+            wake_managed(open()?)?;
             config::save_setting("power", "awake")
         }
         "auto" => config::save_setting("power", "auto"),
@@ -148,7 +148,7 @@ fn run(mut args: Vec<String>) -> Result<()> {
             // state so a keybinding can surface it in a notification.
             let st = dev.status()?;
             if st.asleep {
-                dev.wake()?;
+                wake_managed(dev)?;
                 config::save_setting("power", "awake")?;
                 println!("awake");
             } else {
@@ -266,7 +266,7 @@ fn cmd_status(dev: &Device, json: bool) -> Result<()> {
         println!(
             "{{\"asleep\":{},\"tracking\":\"{}\",\"tracking_sport\":{},\"hdr\":{},\
              \"auto_wb\":{},\"wb_temp\":{},\"pan_deg\":{:.1},\"tilt_deg\":{:.1},\
-             \"zoom\":{},\"auto_exposure\":{},\"power_policy\":\"{}\",\"desired_tracking\":\"{}\"}}",
+             \"zoom\":{},\"auto_exposure\":{},\"auto_sleep_seconds\":{},\"power_policy\":\"{}\",\"desired_tracking\":\"{}\"}}",
             s.asleep,
             json_str(s.tracking.label()),
             s.tracking_sport,
@@ -277,6 +277,7 @@ fn cmd_status(dev: &Device, json: bool) -> Result<()> {
             s.tilt_deg,
             s.zoom,
             s.auto_exposure,
+            s.auto_sleep_seconds,
             desired.power,
             desired.tracking.label()
         );
@@ -284,6 +285,10 @@ fn cmd_status(dev: &Device, json: bool) -> Result<()> {
         println!(
             "power       : {}",
             if s.asleep { "asleep" } else { "awake" }
+        );
+        println!(
+            "sleep timer : {} seconds (0 = disabled)",
+            s.auto_sleep_seconds
         );
         println!(
             "tracking    : {}{}",
@@ -458,7 +463,7 @@ fn cmd_exposure(dev: &Device, rest: &[String]) -> Result<()> {
 }
 
 fn cmd_reset(dev: &Device) -> Result<()> {
-    dev.wake()?;
+    wake_managed(dev)?;
     dev.set_tracking(TrackMode::Off)?;
     dev.recenter()?;
     dev.set_wb_auto()?;
@@ -467,6 +472,12 @@ fn cmd_reset(dev: &Device) -> Result<()> {
     config::save_setting("auto_wb", "true")?;
     println!("reset: awake, tracking off, recentered, auto WB");
     Ok(())
+}
+
+/// A persistent Wake choice must first disable the independent firmware timer.
+fn wake_managed(dev: &Device) -> Result<()> {
+    dev.disable_auto_sleep()?;
+    dev.wake()
 }
 
 // --- small arg helpers ---

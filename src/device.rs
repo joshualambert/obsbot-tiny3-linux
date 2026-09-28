@@ -36,10 +36,12 @@ const TLV_HDR: u8 = 0x01;
 const TLV_FACE_AE: u8 = 0x03;
 const TLV_FOV: u8 = 0x04;
 const TLV_AI_TRACK: u8 = 0x16;
+const TLV_AUTO_SLEEP: u8 = 0x0b;
 
 // Status-block byte offsets (decoded from Tiny4Linux, confirmed reacting live).
 const ST_SLEEP: usize = 0x02;
 const ST_HDR: usize = 0x06;
+const ST_AUTO_SLEEP: usize = 0x0a;
 const ST_AI_CATEGORY: usize = 0x18;
 const ST_AI_SUBMODE: usize = 0x1c;
 const ST_TRACK_SPEED: usize = 0x21;
@@ -131,6 +133,8 @@ impl TrackMode {
 #[derive(Debug, Clone)]
 pub struct Status {
     pub asleep: bool,
+    /// Firmware idle timer in seconds; zero disables vendor auto-sleep.
+    pub auto_sleep_seconds: u16,
     pub hdr: bool,
     pub tracking: TrackMode,
     pub tracking_sport: bool,
@@ -232,6 +236,25 @@ impl Device {
     /// Vendor wake: LED on, gimbal lifts back up. Verified on Tiny 3 Lite.
     pub fn wake(&self) -> Result<()> {
         self.set_power(false)
+    }
+
+    /// Disable the firmware idle timer, independently of USB autosuspend.
+    /// An open control fd and active microphone do NOT inhibit this timer.
+    /// Raw selector-6 TLV 0x0b carries a little-endian u16 seconds value.
+    /// Readback at status bytes 10..12 is verified on Tiny 3 Lite.
+    pub fn disable_auto_sleep(&self) -> Result<()> {
+        if decode_auto_sleep(&self.fd.xu_get(XU_UNIT, SEL_STATUS)?) == 0 {
+            return Ok(());
+        }
+        self.fd
+            .xu_set(XU_UNIT, SEL_STATUS, &[TLV_AUTO_SLEEP, 2, 0, 0])?;
+        for _ in 0..10 {
+            std::thread::sleep(Duration::from_millis(50));
+            if decode_auto_sleep(&self.fd.xu_get(XU_UNIT, SEL_STATUS)?) == 0 {
+                return Ok(());
+            }
+        }
+        Err(Error::NoReply("disabled firmware auto-sleep timer"))
     }
 
     fn set_power(&self, asleep: bool) -> Result<()> {
@@ -430,6 +453,7 @@ impl Device {
         let ae = self.fd.get_ctrl(controls::CID_EXPOSURE_AUTO)?;
         Ok(Status {
             asleep: s[ST_SLEEP] != 0,
+            auto_sleep_seconds: decode_auto_sleep(&s),
             hdr: s[ST_HDR] != 0,
             tracking: TrackMode::from_status(s[ST_AI_CATEGORY], s[ST_AI_SUBMODE]),
             tracking_sport: s[ST_TRACK_SPEED] == 2,
@@ -440,5 +464,29 @@ impl Device {
             zoom,
             auto_exposure: ae == controls::EXPOSURE_AUTO_MODE,
         })
+    }
+}
+
+fn decode_auto_sleep(status: &[u8; 60]) -> u16 {
+    u16::from_le_bytes([status[ST_AUTO_SLEEP], status[ST_AUTO_SLEEP + 1]])
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn firmware_sleep_timer_is_little_endian_and_distinct_from_sleep_state() {
+        // Captured prefix from the affected Tiny 3 Lite: awake but configured
+        // to park itself after 120 seconds, despite an active microphone.
+        let mut status = [0; 60];
+        status[..14].copy_from_slice(&[0x2e, 1, 0, 2, 0, 0, 0, 1, 0, 1, 120, 0, 0, 1]);
+        assert_eq!(decode_auto_sleep(&status), 120);
+        status[ST_SLEEP] = 1;
+        assert_eq!(decode_auto_sleep(&status), 120);
+        status[ST_AUTO_SLEEP..ST_AUTO_SLEEP + 2].copy_from_slice(&600u16.to_le_bytes());
+        assert_eq!(decode_auto_sleep(&status), 600);
+        status[ST_AUTO_SLEEP..ST_AUTO_SLEEP + 2].fill(0);
+        assert_eq!(decode_auto_sleep(&status), 0);
     }
 }
