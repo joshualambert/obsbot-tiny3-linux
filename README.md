@@ -188,10 +188,17 @@ microphone DSP are not implemented. Camera unplug/replug is rediscovered.
 ### Optional call microphone (PipeWire)
 
 `packaging/install-audio.sh` installs a separate user service exposing
-**OBSBOT Calls (Noise + Echo Reduction)**. It uses PipeWire's WebRTC echo
-canceller, high-pass filter and noise suppression, with the speaker monitor as
-an echo reference. It targets the Tiny 3 Lite's stable source name, never an
+**OBSBOT Calls (Speech Optimized)** (stable source name `obsbot_calls`).
+The chain is WebRTC echo cancellation / high-pass → RNNoise → voice EQ →
+soft-knee compressor → lookahead limiter. The speaker monitor supplies the
+echo reference. WebRTC noise suppression is disabled so RNNoise is the only
+software denoiser in this chain. It targets the Tiny 3 Lite's stable source name, never an
 unrelated fallback microphone. Edit the target for other models.
+
+On Arch/Omarchy, install `noise-suppression-for-voice` and `swh-plugins` first
+(`omarchy pkg add noise-suppression-for-voice swh-plugins`). Other distributions
+need their RNNoise LADSPA and SWH LADSPA packages. The installer checks for the
+three required plugin libraries before replacing an existing configuration.
 
 ```bash
 ./packaging/install-audio.sh
@@ -205,8 +212,23 @@ app noise suppression on top of the processed source. Listening to a real
 call is still required to tune speech quality; stream checks alone do not
 establish intelligibility. PipeWire and its WebRTC AEC plugin are required.
 
+The conservative speech preset uses RNNoise VAD 50%, 200ms trailing grace and
+20ms lookbehind to protect word boundaries; EQ −2.5dB at 250Hz, +2dB at 3kHz
+and a −1.5dB shelf above 8kHz; compression at −22dBFS, 3:1 ratio, 10ms attack,
+180ms release, 6dB knee radius and +3dB makeup; and a −2dBFS peak limiter.
+These are starting values, not a voice-specific calibration. The VAD lookbehind
+and limiter add about 25ms beyond the denoiser and normal graph buffering.
+
+RNNoise reduces typing, especially between phrases, but cannot guarantee that
+keystrokes overlapping speech disappear. Raise the VAD threshold cautiously if
+needed; lower it if quiet speech disappears. Compression follows denoising to
+avoid raising keyboard noise first. The config is
+`~/.config/obsbot-tiny3/obsbot-audio.conf`; after tuning, restart only
+`t3-audio.service`. The public source name stays stable for existing call apps.
+
 The filter runs as a separate client, so installing it does not restart the
-audio server. It releases the hardware when no app is using the source.
+audio server. It releases the hardware when the processing graph is idle. Speaker playback
+can also activate capture because the echo canceller follows the speaker monitor.
 To undo: select the original microphone and run
 `systemctl --user disable --now t3-audio.service`.
 
