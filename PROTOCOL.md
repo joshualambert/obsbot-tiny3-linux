@@ -131,6 +131,7 @@ Payload is always `[tag, 0x02_or_0x01, ...]` zero-padded to 60.
 
 | Tag | Control | Value | Result |
 |---|---|---|---|
+| `0x0b` | Firmware auto-sleep timer | `[0x02, seconds_lo, seconds_hi]`; zero disables; readback at status `0x0a/0x0b` | ✅ Tiny 3 Lite 120→0 verified |
 | `0x16` | AI tracking | `[0x02, category, submode]` (see below) | ✅ verified; status byte `0x18`=category, `0x1c`=submode |
 | `0x01` | HDR / WDR | `[0x01, on]` | ✅ toggles (status byte `0x06`) |
 | `0x03` | face-priority AE | `[0x01, mode]` — 0 global / 1 face (needs auto-exposure on) | ⚠️ command accepted; not visually verified |
@@ -183,6 +184,7 @@ Live blob observed: `2e0100020000000100 01 78 0000 01 01 …`. Decoded offsets
 
 | Offset | Field | Status |
 |---|---|---|
+| `0x0a/0x0b` | auto-sleep seconds, u16 LE; 0 disables | ✅ 120→0 and 600→0 verified; camera remained awake |
 | `0x02` | sleep (0=awake, 1=sleep) | ✅ reacts (`00` awake / `01` asleep) |
 | `0x06` | HDR (bool) | ✅ reacts to the HDR TLV |
 | `0x18` | AI mode enable | ✅ `00` idle → `02` when human-tracking on |
@@ -266,6 +268,26 @@ use, holds a control descriptor while awake is required, and sends a verified
 wake when needed. Explicit user sleep overrides this protection. A control
 write completing is not sufficient evidence of a completed gimbal/power
 transition; sleep/wake now poll readback for up to three seconds.
+
+**2026-09-28 correction:** repeated natural sleep/wake was observed every
+124–126 seconds while the guard held a control descriptor and ALSA capture was
+RUNNING. Selector-6 status bytes 10..12 contained `78 00` (120 seconds).
+Sending raw TLV `0b 02 00 00` changed those bytes to `00 00`; the sleep bit
+remained zero. This is the firmware auto-sleep timer, not USB autosuspend.
+The guard must disable this timer **before** it expires, not merely recover
+from sleep after the timer has already parked the camera. Timer command layout
+is independently documented by [meet4k](https://github.com/samliddicott/meet4k)
+and the [OBSBOT SDK call audit](https://github.com/vampyren/obsbot4linux/blob/main/docs/dev/SDK_REDROP_2026-05.md)
+(`cameraSetSuspendTimeU`, TLV header `0x020b`). Tiny 3 Lite live readback was
+confirmed here; other models remain unverified for this field.
+
+Validation: a seven-minute observation (1,638 status samples) after disabling
+the timer saw zero sleep samples and zero nonzero-timer samples. After installing
+the updated guard, injecting `0b 02 58 02` verified the full 600-second readback;
+the guard cleared it to zero within the test's five-second deadline without a
+sleep transition. Journal history showed no reactive wake events after the
+120-second timer was disabled.
+
 
 ### 3. Chromium resets WB on every stream open
 

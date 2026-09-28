@@ -70,6 +70,16 @@ fn main() {
                 return dev.set_wb_temp(config.wb_temp);
             }
             let mut status = dev.status()?;
+            // Prevent timed sleep before it happens. Reactively waking the
+            // camera every time this timer fires causes visible power cycling.
+            // Recheck on every active tick to cover firmware/app/replug resets.
+            if keep_awake && status.auto_sleep_seconds != 0 {
+                dev.disable_auto_sleep()?;
+                eprintln!(
+                    "t3-wb-guard: disabled firmware auto-sleep (was {}s)",
+                    status.auto_sleep_seconds
+                );
+            }
             if config.power == "sleep" && !status.asleep {
                 dev.sleep()?;
                 eprintln!("t3-wb-guard: restored requested sleep");
@@ -98,7 +108,7 @@ fn main() {
             // Verify vendor SETs as well as UVC controls. A successful ioctl
             // only means transport success, not that firmware applied it.
             let actual = dev.status()?;
-            if (keep_awake && actual.asleep)
+            if (keep_awake && (actual.asleep || actual.auto_sleep_seconds != 0))
                 || (config.power == "sleep" && !actual.asleep)
                 || actual.tracking != config.tracking
                 || config.hdr.is_some_and(|h| h != actual.hdr)
