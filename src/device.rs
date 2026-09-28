@@ -226,12 +226,25 @@ impl Device {
 
     /// Vendor sleep: LED off, gimbal parks. Verified on Tiny 3 Lite.
     pub fn sleep(&self) -> Result<()> {
-        self.send_set(RCV_CAMERA, CMD_DEV_STATUS, &[1, 0, 0, 0])
+        self.set_power(true)
     }
 
     /// Vendor wake: LED on, gimbal lifts back up. Verified on Tiny 3 Lite.
     pub fn wake(&self) -> Result<()> {
-        self.send_set(RCV_CAMERA, CMD_DEV_STATUS, &[0, 0, 0, 0])
+        self.set_power(false)
+    }
+
+    fn set_power(&self, asleep: bool) -> Result<()> {
+        self.send_set(RCV_CAMERA, CMD_DEV_STATUS, &[asleep as u8, 0, 0, 0])?;
+        // Gimbal/firmware transition takes longer than a control transfer.
+        // Keep the descriptor open while waiting so USB cannot suspend midway.
+        for _ in 0..30 {
+            std::thread::sleep(Duration::from_millis(100));
+            if (self.fd.xu_get(XU_UNIT, SEL_STATUS)?[ST_SLEEP] != 0) == asleep {
+                return Ok(());
+            }
+        }
+        Err(Error::NoReply("confirmed power transition"))
     }
 
     // --- identity ---
@@ -409,19 +422,12 @@ impl Device {
     /// Read and decode the full status: vendor block + key UVC controls.
     pub fn status(&self) -> Result<Status> {
         let s = self.fd.xu_get(XU_UNIT, SEL_STATUS)?;
-        let pan = self.fd.get_ctrl(controls::CID_PAN_ABSOLUTE).unwrap_or(0);
-        let tilt = self.fd.get_ctrl(controls::CID_TILT_ABSOLUTE).unwrap_or(0);
-        let zoom = self.fd.get_ctrl(controls::CID_ZOOM_ABSOLUTE).unwrap_or(0);
-        let auto_wb = self
-            .fd
-            .get_ctrl(controls::CID_AUTO_WHITE_BALANCE)
-            .unwrap_or(0)
-            != 0;
-        let wb_temp = self
-            .fd
-            .get_ctrl(controls::CID_WHITE_BALANCE_TEMPERATURE)
-            .unwrap_or(0);
-        let ae = self.fd.get_ctrl(controls::CID_EXPOSURE_AUTO).unwrap_or(0);
+        let pan = self.fd.get_ctrl(controls::CID_PAN_ABSOLUTE)?;
+        let tilt = self.fd.get_ctrl(controls::CID_TILT_ABSOLUTE)?;
+        let zoom = self.fd.get_ctrl(controls::CID_ZOOM_ABSOLUTE)?;
+        let auto_wb = self.fd.get_ctrl(controls::CID_AUTO_WHITE_BALANCE)? != 0;
+        let wb_temp = self.fd.get_ctrl(controls::CID_WHITE_BALANCE_TEMPERATURE)?;
+        let ae = self.fd.get_ctrl(controls::CID_EXPOSURE_AUTO)?;
         Ok(Status {
             asleep: s[ST_SLEEP] != 0,
             hdr: s[ST_HDR] != 0,

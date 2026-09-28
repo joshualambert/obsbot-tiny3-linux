@@ -6,3 +6,12 @@
 # re-pins to and that `t3ctl wb pin` uses. 4000K is a good baseline for a
 # green-walled office where the camera's auto WB overcorrects.
 wb_temp = 4000
+
+# Persistent intent, updated by t3ctl and reloaded by the guard every second.
+# auto: wake for video OR microphone capture. awake: keep awake until sleep.
+# sleep: explicit privacy choice, overrides active calls until wake/auto.
+power = auto
+tracking = off
+auto_wb = false
+# HDR is left alone until explicitly configured.
+# hdr = false

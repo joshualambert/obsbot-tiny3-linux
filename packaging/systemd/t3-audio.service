@@ -1,0 +1,13 @@
+[Unit]
+Description=OBSBOT call microphone (noise and speaker echo reduction)
+After=pipewire.service wireplumber.service
+Requires=pipewire.service
+
+[Service]
+ExecStart=/usr/bin/pipewire -c %h/.config/obsbot-tiny3/obsbot-audio.conf
+Restart=on-failure
+RestartSec=3
+NoNewPrivileges=true
+
+[Install]
+WantedBy=default.target

@@ -29,7 +29,7 @@ documented in [`PROTOCOL.md`](PROTOCOL.md).
 | **White balance** | `t3ctl wb temp <K>` / `wb auto` | Manual color temperature, quirk-safe |
 | **HDR / FOV / exposure** | `t3ctl hdr`, `fov`, `exposure` | |
 | **Status** | `t3ctl status` / `info` | Reads state without waking the camera |
-| **WB guard daemon** | `t3-wb-guard` | Re-pins manual WB when apps flip it; idles at zero fds so the camera can still sleep |
+| **Settings guard** | `t3-wb-guard` | Enforces saved power, tracking, HDR and WB; protects audio-only calls |
 
 ## Supported models
 
@@ -158,23 +158,57 @@ t3ctl --json status          # machine-readable output
 
 Run `t3ctl --help` for the full command list.
 
-### The white-balance guard
+### Persistent settings and call protection
 
-Chromium-based apps (Slack, Chrome, Electron) re-enable **auto** white balance
-every time they open the camera, and this camera's auto WB overcorrects badly in
-green-walled rooms. `t3-wb-guard` watches for that and re-pins your configured
-manual temperature.
+`t3-wb-guard` keeps its historical service name, but now reconciles power,
+tracking, HDR and white balance every second. `t3ctl` saves these choices in
+`~/.config/obsbot-tiny3/config`; the guard reloads changes without a restart.
+CLI and guard operations share a lock so they cannot overwrite one another
+mid-command. Commands check camera readback and report failures; a saved
+setting remains pending if firmware rejects it, and the guard retries.
 
-Crucially, it holds **zero file descriptors** on the camera while nothing is
-using it (it waits on an `inotify` open-watch, which does not open the device),
-so the camera can still enter USB autosuspend and sleep. It only touches the
-camera while an app is already holding it awake.
+- `t3ctl wake`: stay awake, including without a video preview, until Sleep/Auto.
+- `t3ctl sleep`: explicit sleep overrides active calls and firmware wake attempts.
+- `t3ctl auto`: wake when an app uses video **or the camera microphone**; release
+  the keep-awake descriptor when idle. This is the default for existing configs.
+- `t3ctl track off`: tracking stays off during use even if firmware changes it.
+- `t3ctl wb auto`: auto WB now stays selected; the guard no longer fights it.
 
-Set your target temperature in `~/.config/obsbot-tiny3/config`:
+The guard matches ALSA capture to the same physical USB device as the camera,
+so changing sound-card numbers or using a different microphone is safe. It
+reads capture activity from procfs; it does not record or start video capture.
+Defaults are tracking off and manual WB at 4000K. HDR remains unmanaged until
+explicitly selected. Power transitions wait for vendor readback.
 
-```ini
-wb_temp = 4000
+Reconciliation is corrective, not an atomic firmware lock: external voice,
+gesture or app changes can take effect briefly before the next guard tick.
+The vendor controls for disabling voice/gesture triggers and changing onboard
+microphone DSP are not implemented. Camera unplug/replug is rediscovered.
+
+### Optional call microphone (PipeWire)
+
+`packaging/install-audio.sh` installs a separate user service exposing
+**OBSBOT Calls (Noise + Echo Reduction)**. It uses PipeWire's WebRTC echo
+canceller, high-pass filter and noise suppression, with the speaker monitor as
+an echo reference. It targets the Tiny 3 Lite's stable source name, never an
+unrelated fallback microphone. Edit the target for other models.
+
+```bash
+./packaging/install-audio.sh
+pactl set-default-source obsbot_calls
 ```
+
+Select this source in call apps that retain an explicit microphone selection.
+Keep raw hardware gain at or below 100%; raising it further cannot recover
+speech removed by the camera's onboard processing. Avoid layering aggressive
+app noise suppression on top of the processed source. Listening to a real
+call is still required to tune speech quality; stream checks alone do not
+establish intelligibility. PipeWire and its WebRTC AEC plugin are required.
+
+The filter runs as a separate client, so installing it does not restart the
+audio server. It releases the hardware when no app is using the source.
+To undo: select the original microphone and run
+`systemctl --user disable --now t3-audio.service`.
 
 ## Omarchy / Hyprland integration
 

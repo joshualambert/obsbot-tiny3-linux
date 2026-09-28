@@ -258,11 +258,14 @@ it asleep. So `t3ctl status`/`info` are safe on a sleeping camera; only capture
 wakes it. Idle *monitoring* still must hold **no** fd so USB autosuspend can
 engage — inotify on the node works (it doesn't open the device).
 
-This firmware has no self-sleep: the camera sleeps only via USB runtime
-autosuspend (`/sys/bus/usb/devices/<port>/power/control` = `auto`), which
-engages ~2 s after **all** interfaces go idle. Verified: capture stopped →
-`runtime_status` returned to `suspended` within seconds. A lingering mic
-capture (Slack is a known offender) keeps it awake.
+The earlier tests observed runtime autosuspend after all interfaces became
+idle; they did **not** establish that vendor sleep cannot occur during calls.
+Later live testing reproduced vendor sleep while ALSA capture remained RUNNING.
+The guard therefore checks vendor power state during both microphone and video
+use, holds a control descriptor while awake is required, and sends a verified
+wake when needed. Explicit user sleep overrides this protection. A control
+write completing is not sufficient evidence of a completed gimbal/power
+transition; sleep/wake now poll readback for up to three seconds.
 
 ### 3. Chromium resets WB on every stream open
 
