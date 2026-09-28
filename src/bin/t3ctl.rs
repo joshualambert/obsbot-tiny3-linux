@@ -13,6 +13,7 @@ USAGE:
 POWER
     sleep                 Put the camera to sleep (LED off, gimbal parks)
     wake                  Wake the camera (LED on, gimbal lifts)
+    auto                  Wake during video or microphone use; release when idle
     toggle                Sleep if awake, wake if asleep
 
 INFO
@@ -113,19 +114,33 @@ fn run(mut args: Vec<String>) -> Result<()> {
         return cmd_power(device_path.as_deref(), json);
     }
 
-    let open = || -> Result<Device> {
-        match &device_path {
-            Some(p) => Device::open_path(p),
-            None => Device::open_default(),
+    let _lock = config::PolicyLock::acquire()?;
+
+    let opened = std::cell::OnceCell::new();
+    let open = || -> Result<&Device> {
+        if opened.get().is_none() {
+            let dev = match &device_path {
+                Some(p) => Device::open_path(p)?,
+                None => Device::open_default()?,
+            };
+            let _ = opened.set(dev);
         }
+        Ok(opened.get().unwrap())
     };
 
     // Gimbal-moving arguments (pan/tilt/zoom) and on/off toggles are validated
     // BEFORE opening the device, so a malformed move (e.g. `t3ctl pan abc`)
     // fails without touching the camera at all.
-    match cmd.as_str() {
-        "sleep" => open()?.sleep(),
-        "wake" => open()?.wake(),
+    let result = match cmd.as_str() {
+        "sleep" => {
+            open()?.sleep()?;
+            config::save_setting("power", "sleep")
+        }
+        "wake" => {
+            open()?.wake()?;
+            config::save_setting("power", "awake")
+        }
+        "auto" => config::save_setting("power", "auto"),
         "toggle" => {
             let dev = open()?;
             // Reading the vendor sleep bit does NOT wake the camera, so we can
@@ -134,16 +149,18 @@ fn run(mut args: Vec<String>) -> Result<()> {
             let st = dev.status()?;
             if st.asleep {
                 dev.wake()?;
+                config::save_setting("power", "awake")?;
                 println!("awake");
             } else {
                 dev.sleep()?;
+                config::save_setting("power", "sleep")?;
                 println!("asleep");
             }
             Ok(())
         }
-        "status" => cmd_status(&open()?, json),
-        "info" => cmd_info(&open()?, json),
-        "track" => cmd_track(&open()?, rest),
+        "status" => cmd_status(open()?, json),
+        "info" => cmd_info(open()?, json),
+        "track" => cmd_track(open()?, rest),
         "recenter" | "park" | "home" => open()?.recenter(),
         "pan" => {
             let d = need_finite(rest, "pan degrees")?;
@@ -157,21 +174,48 @@ fn run(mut args: Vec<String>) -> Result<()> {
             let z = need_i32(rest, "zoom 0..100")?;
             open()?.set_zoom(z)
         }
-        "preset" => cmd_preset(&open()?, rest),
-        "wb" => cmd_wb(&open()?, rest),
+        "preset" => cmd_preset(open()?, rest),
+        "wb" => cmd_wb(open()?, rest),
         "hdr" => {
             let on = need_on_off(rest, "hdr")?;
-            open()?.set_hdr(on)
+            open()?.set_hdr(on)?;
+            config::save_setting("hdr", if on { "true" } else { "false" })
         }
-        "fov" => cmd_fov(&open()?, rest),
-        "exposure" => cmd_exposure(&open()?, rest),
+        "fov" => cmd_fov(open()?, rest),
+        "exposure" => cmd_exposure(open()?, rest),
         "face-ae" => {
             let on = need_on_off(rest, "face-ae")?;
             open()?.set_face_ae(on)
         }
-        "reset" => cmd_reset(&open()?),
+        "reset" => cmd_reset(open()?),
         other => Err(Error::Usage(format!("unknown command '{other}'"))),
+    };
+    result?;
+    if matches!(
+        cmd.as_str(),
+        "sleep" | "wake" | "toggle" | "track" | "hdr" | "wb" | "reset"
+    ) {
+        std::thread::sleep(std::time::Duration::from_millis(300));
+        let actual = open()?.status()?;
+        let desired = config::Config::load();
+        let mismatch = match cmd.as_str() {
+            "sleep" | "wake" | "toggle" => actual.asleep != (desired.power == "sleep"),
+            "track" if rest.first().map(String::as_str) != Some("speed") => {
+                actual.tracking != desired.tracking
+            }
+            "hdr" => desired.hdr != Some(actual.hdr),
+            "wb" => {
+                actual.auto_wb != desired.auto_wb
+                    || (!desired.auto_wb && actual.wb_temp != desired.wb_temp)
+            }
+            "reset" => actual.asleep || actual.tracking != TrackMode::Off || !actual.auto_wb,
+            _ => false,
+        };
+        if mismatch {
+            return Err(Error::Config("camera did not confirm requested setting; saved intent will be retried by the guard".into()));
+        }
     }
+    Ok(())
 }
 
 /// Minimal JSON string escaper for the fields we emit (control chars, quotes,
@@ -217,11 +261,12 @@ fn cmd_power(device_path: Option<&str>, json: bool) -> Result<()> {
 
 fn cmd_status(dev: &Device, json: bool) -> Result<()> {
     let s = dev.status()?;
+    let desired = config::Config::load();
     if json {
         println!(
             "{{\"asleep\":{},\"tracking\":\"{}\",\"tracking_sport\":{},\"hdr\":{},\
              \"auto_wb\":{},\"wb_temp\":{},\"pan_deg\":{:.1},\"tilt_deg\":{:.1},\
-             \"zoom\":{},\"auto_exposure\":{}}}",
+             \"zoom\":{},\"auto_exposure\":{},\"power_policy\":\"{}\",\"desired_tracking\":\"{}\"}}",
             s.asleep,
             json_str(s.tracking.label()),
             s.tracking_sport,
@@ -231,7 +276,9 @@ fn cmd_status(dev: &Device, json: bool) -> Result<()> {
             s.pan_deg,
             s.tilt_deg,
             s.zoom,
-            s.auto_exposure
+            s.auto_exposure,
+            desired.power,
+            desired.tracking.label()
         );
     } else {
         println!(
@@ -290,10 +337,12 @@ fn cmd_track(dev: &Device, rest: &[String]) -> Result<()> {
         let on = dev.status()?.tracking != TrackMode::Off;
         return if on {
             dev.set_tracking(TrackMode::Off)?;
+            config::save_setting("tracking", "off")?;
             println!("off");
             Ok(())
         } else {
             dev.set_tracking(TrackMode::Normal)?;
+            config::save_setting("tracking", "normal")?;
             println!("on");
             Ok(())
         };
@@ -308,7 +357,8 @@ fn cmd_track(dev: &Device, rest: &[String]) -> Result<()> {
     }
     let mode = TrackMode::from_str(arg)
         .ok_or_else(|| Error::Usage(format!("unknown tracking mode '{arg}'")))?;
-    dev.set_tracking(mode)
+    dev.set_tracking(mode)?;
+    config::save_setting("tracking", mode.label())
 }
 
 fn cmd_preset(dev: &Device, rest: &[String]) -> Result<()> {
@@ -360,14 +410,22 @@ fn cmd_preset(dev: &Device, rest: &[String]) -> Result<()> {
 
 fn cmd_wb(dev: &Device, rest: &[String]) -> Result<()> {
     match rest.first().map(String::as_str) {
-        Some("auto") => dev.set_wb_auto(),
+        Some("auto") => {
+            dev.set_wb_auto()?;
+            config::save_setting("auto_wb", "true")
+        }
         Some("temp") => {
             let t = need_i32(&rest[1.min(rest.len())..], "white balance temperature")?;
-            dev.set_wb_temp(t)
+            dev.set_wb_temp(t)?;
+            config::save_setting("wb_temp", &t.to_string())?;
+            config::save_setting("auto_wb", "false")
         }
         // Pin to the configured target temperature (single source of truth for
         // the udev cold-plug hook — reads ~/.config or /etc/obsbot-tiny3/config).
-        Some("pin") => dev.set_wb_temp(config::Config::load().wb_temp),
+        Some("pin") => {
+            dev.set_wb_temp(config::Config::load().wb_temp)?;
+            config::save_setting("auto_wb", "false")
+        }
         _ => Err(Error::Usage(format!(
             "wb auto | wb temp <{}..{}> | wb pin",
             controls::WB_TEMP_MIN,
@@ -404,6 +462,9 @@ fn cmd_reset(dev: &Device) -> Result<()> {
     dev.set_tracking(TrackMode::Off)?;
     dev.recenter()?;
     dev.set_wb_auto()?;
+    config::save_setting("power", "awake")?;
+    config::save_setting("tracking", "off")?;
+    config::save_setting("auto_wb", "true")?;
     println!("reset: awake, tracking off, recentered, auto WB");
     Ok(())
 }

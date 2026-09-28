@@ -72,3 +72,83 @@ pub fn usb_power_state(video_path: &str) -> Option<String> {
     }
     None
 }
+
+/// Match the ALSA card to the video's physical USB device, never a fixed card
+/// number. Reading procfs status does not open a capture stream or record audio.
+pub fn audio_active(video_path: &str) -> bool {
+    let Ok(real) = real_node(video_path) else {
+        return false;
+    };
+    let Some(node) = real.rsplit('/').next() else {
+        return false;
+    };
+    let Ok(video) = std::fs::canonicalize(format!("/sys/class/video4linux/{node}/device")) else {
+        return false;
+    };
+    let Some(usb) = video.ancestors().find(|p| p.join("idVendor").exists()) else {
+        return false;
+    };
+    let Ok(cards) = std::fs::read_dir("/sys/class/sound") else {
+        return false;
+    };
+    for card in cards.flatten() {
+        let name = card.file_name().to_string_lossy().to_string();
+        if !name
+            .strip_prefix("card")
+            .is_some_and(|s| !s.is_empty() && s.bytes().all(|c| c.is_ascii_digit()))
+        {
+            continue;
+        }
+        let Ok(device) = std::fs::canonicalize(card.path().join("device")) else {
+            continue;
+        };
+        if !device.starts_with(usb) {
+            continue;
+        }
+        let Ok(pcms) = std::fs::read_dir(format!("/proc/asound/{name}")) else {
+            continue;
+        };
+        for pcm in pcms.flatten() {
+            let n = pcm.file_name().to_string_lossy().to_string();
+            if !n.starts_with("pcm") || !n.ends_with('c') {
+                continue;
+            }
+            let Ok(subs) = std::fs::read_dir(pcm.path()) else {
+                continue;
+            };
+            for sub in subs.flatten() {
+                if std::fs::read_to_string(sub.path().join("status"))
+                    .is_ok_and(|s| capture_running(&s))
+                {
+                    return true;
+                }
+            }
+        }
+    }
+    false
+}
+
+fn capture_running(status: &str) -> bool {
+    status.lines().any(|l| {
+        l.split_once(':')
+            .is_some_and(|(k, v)| k.trim() == "state" && v.trim() == "RUNNING")
+    })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    #[test]
+    fn audio_activity_requires_running_capture() {
+        assert!(capture_running("state: RUNNING\nowner_pid: 123"));
+        for s in [
+            "closed",
+            "state: SUSPENDED",
+            "state: PREPARED",
+            "state: XRUN",
+            "",
+        ] {
+            assert!(!capture_running(s));
+        }
+    }
+}

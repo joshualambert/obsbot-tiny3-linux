@@ -37,8 +37,10 @@ else
 fi
 
 echo "==> installing binaries to $BINDIR"
-install -Dm755 "$T3CTL" "$BINDIR/t3ctl"
-install -Dm755 "$WB_GUARD" "$BINDIR/t3-wb-guard"
+install -Dm755 "$T3CTL" "$BINDIR/t3ctl.new"
+mv -f "$BINDIR/t3ctl.new" "$BINDIR/t3ctl"
+install -Dm755 "$WB_GUARD" "$BINDIR/t3-wb-guard.new"
+mv -f "$BINDIR/t3-wb-guard.new" "$BINDIR/t3-wb-guard"
 install -Dm755 "$REPO/bin/t3-preview" "$BINDIR/t3-preview"
 
 # The Omarchy bar widget is intentionally NOT installed here — this installer is
@@ -55,7 +57,7 @@ mkdir -p "$UNITDIR"
 # Generate the unit with an absolute ExecStart matching this prefix.
 cat > "$UNITDIR/t3-wb-guard.service" <<EOF
 [Unit]
-Description=OBSBOT Tiny 3 white-balance guard (re-pins manual WB when apps flip it to auto)
+Description=OBSBOT Tiny 3 settings and call guard
 Documentation=https://github.com/joshualambert/obsbot-tiny3-linux
 
 [Service]
@@ -71,7 +73,8 @@ EOF
 
 echo "==> enabling t3-wb-guard.service"
 systemctl --user daemon-reload
-systemctl --user enable --now t3-wb-guard.service
+systemctl --user enable t3-wb-guard.service
+systemctl --user restart t3-wb-guard.service
 
 echo
 echo "Done. t3ctl and t3-wb-guard installed to $BINDIR"

@@ -29,7 +29,7 @@ documented in [`PROTOCOL.md`](PROTOCOL.md).
 | **White balance** | `t3ctl wb temp <K>` / `wb auto` | Manual color temperature, quirk-safe |
 | **HDR / FOV / exposure** | `t3ctl hdr`, `fov`, `exposure` | |
 | **Status** | `t3ctl status` / `info` | Reads state without waking the camera |
-| **WB guard daemon** | `t3-wb-guard` | Re-pins manual WB when apps flip it; idles at zero fds so the camera can still sleep |
+| **Settings guard** | `t3-wb-guard` | Enforces saved power, tracking, HDR and WB; protects audio-only calls |
 
 ## Supported models
 
@@ -158,23 +158,79 @@ t3ctl --json status          # machine-readable output
 
 Run `t3ctl --help` for the full command list.
 
-### The white-balance guard
+### Persistent settings and call protection
 
-Chromium-based apps (Slack, Chrome, Electron) re-enable **auto** white balance
-every time they open the camera, and this camera's auto WB overcorrects badly in
-green-walled rooms. `t3-wb-guard` watches for that and re-pins your configured
-manual temperature.
+`t3-wb-guard` keeps its historical service name, but now reconciles power,
+tracking, HDR and white balance every second. `t3ctl` saves these choices in
+`~/.config/obsbot-tiny3/config`; the guard reloads changes without a restart.
+CLI and guard operations share a lock so they cannot overwrite one another
+mid-command. Commands check camera readback and report failures; a saved
+setting remains pending if firmware rejects it, and the guard retries.
 
-Crucially, it holds **zero file descriptors** on the camera while nothing is
-using it (it waits on an `inotify` open-watch, which does not open the device),
-so the camera can still enter USB autosuspend and sleep. It only touches the
-camera while an app is already holding it awake.
+- `t3ctl wake`: stay awake, including without a video preview, until Sleep/Auto.
+- `t3ctl sleep`: explicit sleep overrides active calls and firmware wake attempts.
+- `t3ctl auto`: wake when an app uses video **or the camera microphone**; release
+  the keep-awake descriptor when idle. This is the default for existing configs.
+- `t3ctl track off`: tracking stays off during use even if firmware changes it.
+- `t3ctl wb auto`: auto WB now stays selected; the guard no longer fights it.
 
-Set your target temperature in `~/.config/obsbot-tiny3/config`:
+The guard matches ALSA capture to the same physical USB device as the camera,
+so changing sound-card numbers or using a different microphone is safe. It
+reads capture activity from procfs; it does not record or start video capture.
+Defaults are tracking off and manual WB at 4000K. HDR remains unmanaged until
+explicitly selected. Power transitions wait for vendor readback.
 
-```ini
-wb_temp = 4000
+Reconciliation is corrective, not an atomic firmware lock: external voice,
+gesture or app changes can take effect briefly before the next guard tick.
+The vendor controls for disabling voice/gesture triggers and changing onboard
+microphone DSP are not implemented. Camera unplug/replug is rediscovered.
+
+### Optional call microphone (PipeWire)
+
+`packaging/install-audio.sh` installs a separate user service exposing
+**OBSBOT Calls (Speech Optimized)** (stable source name `obsbot_calls`).
+The chain is WebRTC echo cancellation / high-pass → RNNoise → voice EQ →
+soft-knee compressor → lookahead limiter. The speaker monitor supplies the
+echo reference. WebRTC noise suppression is disabled so RNNoise is the only
+software denoiser in this chain. It targets the Tiny 3 Lite's stable source name, never an
+unrelated fallback microphone. Edit the target for other models.
+
+On Arch/Omarchy, install `noise-suppression-for-voice` and `swh-plugins` first
+(`omarchy pkg add noise-suppression-for-voice swh-plugins`). Other distributions
+need their RNNoise LADSPA and SWH LADSPA packages. The installer checks for the
+three required plugin libraries before replacing an existing configuration.
+
+```bash
+./packaging/install-audio.sh
+pactl set-default-source obsbot_calls
 ```
+
+Select this source in call apps that retain an explicit microphone selection.
+Keep raw hardware gain at or below 100%; raising it further cannot recover
+speech removed by the camera's onboard processing. Avoid layering aggressive
+app noise suppression on top of the processed source. Listening to a real
+call is still required to tune speech quality; stream checks alone do not
+establish intelligibility. PipeWire and its WebRTC AEC plugin are required.
+
+The conservative speech preset uses RNNoise VAD 50%, 200ms trailing grace and
+20ms lookbehind to protect word boundaries; EQ −2.5dB at 250Hz, +2dB at 3kHz
+and a −1.5dB shelf above 8kHz; compression at −22dBFS, 3:1 ratio, 10ms attack,
+180ms release, 6dB knee radius and +3dB makeup; and a −2dBFS peak limiter.
+These are starting values, not a voice-specific calibration. The VAD lookbehind
+and limiter add about 25ms beyond the denoiser and normal graph buffering.
+
+RNNoise reduces typing, especially between phrases, but cannot guarantee that
+keystrokes overlapping speech disappear. Raise the VAD threshold cautiously if
+needed; lower it if quiet speech disappears. Compression follows denoising to
+avoid raising keyboard noise first. The config is
+`~/.config/obsbot-tiny3/obsbot-audio.conf`; after tuning, restart only
+`t3-audio.service`. The public source name stays stable for existing call apps.
+
+The filter runs as a separate client, so installing it does not restart the
+audio server. It releases the hardware when the processing graph is idle. Speaker playback
+can also activate capture because the echo canceller follows the speaker monitor.
+To undo: select the original microphone and run
+`systemctl --user disable --now t3-audio.service`.
 
 ## Omarchy / Hyprland integration
 
