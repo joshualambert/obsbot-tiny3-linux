@@ -39,7 +39,7 @@ Please [report results](CONTRIBUTING.md) for your model.
 | Model | USB ID | Status |
 |---|---|---|
 | OBSBOT Tiny 3 Lite | `3564:ff04` | ✅ **Verified** on real hardware (firmware 0510) |
-| OBSBOT Tiny 3 | `3564:????` | ⚠️ Expected to work — needs a tester (add its PID) |
+| OBSBOT Tiny 3 | `3564:ff02` | ✅ **Verified** on real hardware (firmware 0510) |
 | OBSBOT Tiny 3 SE | `3564:????` | ⚠️ Expected to work — needs a tester (add its PID) |
 | OBSBOT Tiny 2 / 2 Lite | `3564:fef8` / … | ↔️ Use [Tiny4Linux](https://github.com/OpenFoxes/Tiny4Linux) (same protocol family) |
 
