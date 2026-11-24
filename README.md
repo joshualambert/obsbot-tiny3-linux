@@ -24,7 +24,7 @@ documented in [`PROTOCOL.md`](PROTOCOL.md).
 | Feature | `t3ctl` | Notes |
 |---|---|---|
 | **Sleep / wake** | `t3ctl sleep` / `wake` / `toggle` | Real vendor sleep: LED off, gimbal parks |
-| **AI tracking** | `t3ctl track on\|off\|<mode>` | normal, upper/lower body, close-up, headless, group, hand, whiteboard, desk |
+| **AI tracking** | `t3ctl track on\|off\|<mode>`, `track speed slow\|standard\|fast` | normal, upper/lower body, close-up, headless, group, hand, whiteboard, desk |
 | **Gimbal** | `t3ctl pan/tilt/zoom`, `recenter` | Absolute PTZ + named presets |
 | **White balance** | `t3ctl wb temp <K>` / `wb auto` | Manual color temperature, quirk-safe |
 | **HDR / FOV / exposure** | `t3ctl hdr`, `fov`, `exposure` | |
@@ -140,6 +140,7 @@ t3ctl info                   # serial number, UUID
 t3ctl track on               # AI subject tracking
 t3ctl track upper            # upper-body framing
 t3ctl track off
+t3ctl track speed fast       # slow | standard | fast (OBSBOT Center's levels)
 
 t3ctl pan 20                 # absolute pan, degrees (-130..130)
 t3ctl tilt -10               # absolute tilt (-90..90)

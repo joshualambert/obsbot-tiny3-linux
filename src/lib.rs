@@ -17,5 +17,5 @@ pub mod error;
 pub mod frame;
 pub mod ioctl;
 
-pub use device::{Device, Status, TrackMode};
+pub use device::{Device, Status, TrackMode, TrackSpeed};
 pub use error::{Error, Result};
