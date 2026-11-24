@@ -1,7 +1,7 @@
 //! t3ctl — command-line control for the OBSBOT Tiny 3 series webcam.
 
 use obsbot_tiny3::config::{self, Preset};
-use obsbot_tiny3::{controls, discover, Device, Error, Result, TrackMode};
+use obsbot_tiny3::{controls, discover, Device, Error, Result, TrackMode, TrackSpeed};
 use std::process::ExitCode;
 
 const USAGE: &str = "\
@@ -24,7 +24,8 @@ INFO
 AI TRACKING
     track on|off          Enable/disable tracking
     track <mode>          normal|upper|close|headless|lower|group|hand|whiteboard|desk
-    track speed std|sport Tracking responsiveness (experimental)
+    track speed slow|standard|fast
+                          Tracking speed, OBSBOT Center's levels (std/normal, sport also work)
 
 GIMBAL
     recenter              Return gimbal to center (a.k.a. park/home)
@@ -236,6 +237,14 @@ fn json_str(s: &str) -> String {
     out
 }
 
+/// A tracking-speed value as OBSBOT Center names it, else `raw N`.
+fn speed_label(v: u32) -> String {
+    match TrackSpeed::from_wire(v) {
+        Some(s) => s.label().to_string(),
+        None => format!("raw {v}"),
+    }
+}
+
 fn cmd_power(device_path: Option<&str>, json: bool) -> Result<()> {
     let path = match device_path {
         Some(p) => p.to_string(),
@@ -264,12 +273,16 @@ fn cmd_status(dev: &Device, json: bool) -> Result<()> {
     let desired = config::Config::load();
     if json {
         println!(
-            "{{\"asleep\":{},\"tracking\":\"{}\",\"tracking_sport\":{},\"hdr\":{},\
+            "{{\"asleep\":{},\"tracking\":\"{}\",\"tracking_sport\":{},\"tracking_speed\":{},\"hdr\":{},\
              \"auto_wb\":{},\"wb_temp\":{},\"pan_deg\":{:.1},\"tilt_deg\":{:.1},\
              \"zoom\":{},\"auto_exposure\":{},\"auto_sleep_seconds\":{},\"power_policy\":\"{}\",\"desired_tracking\":\"{}\"}}",
             s.asleep,
             json_str(s.tracking.label()),
-            s.tracking_sport,
+            s.tracking_speed == Some(TrackSpeed::Fast.wire()),
+            match s.tracking_speed {
+                Some(v) => format!("\"{}\"", json_str(&speed_label(v))),
+                None => "null".to_string(),
+            },
             s.hdr,
             s.auto_wb,
             s.wb_temp,
@@ -293,7 +306,10 @@ fn cmd_status(dev: &Device, json: bool) -> Result<()> {
         println!(
             "tracking    : {}{}",
             s.tracking.label(),
-            if s.tracking_sport { " (sport)" } else { "" }
+            match s.tracking_speed {
+                Some(v) => format!(", speed {}", speed_label(v)),
+                None => String::new(),
+            }
         );
         println!("hdr         : {}", onoff(s.hdr));
         println!(
@@ -355,9 +371,11 @@ fn cmd_track(dev: &Device, rest: &[String]) -> Result<()> {
     if arg == "speed" {
         let s = rest.get(1).map(String::as_str);
         return match s {
-            Some("sport") | Some("fast") => dev.set_track_speed(true),
-            Some("std") | Some("standard") | Some("normal") => dev.set_track_speed(false),
-            _ => Err(Error::Usage("track speed std|sport".into())),
+            Some(name) => match TrackSpeed::from_str(name) {
+                Some(speed) => dev.set_track_speed(speed),
+                None => Err(Error::Usage("track speed slow|standard|fast".into())),
+            },
+            None => Err(Error::Usage("track speed slow|standard|fast".into())),
         };
     }
     let mode = TrackMode::from_str(arg)

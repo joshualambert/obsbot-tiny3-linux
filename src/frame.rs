@@ -3,7 +3,8 @@
 //! Layout (60 bytes, zero-padded, little-endian):
 //! ```text
 //!  0      magic   0xAA
-//!  1      flags   0x25 = SET (with nested payload) · 0x01 = header-only GET
+//!  1      flags   0x25 = SET (with nested payload) · 0x01 = header-only GET ·
+//!                 0x21 = GET with nested payload (e.g. which AI parameter to read)
 //!  2..4   seq     u16   reply echoes it — match on this
 //!  4..6   len     u16 = 0x000C  (header bytes 0..12 are covered by the header token)
 //!  6..8   token   u16   CRC-16/USB over bytes[0:6] + 00 00 + bytes[8:12]
@@ -25,6 +26,8 @@ use crate::crc::crc16_usb;
 pub const MAGIC: u8 = 0xAA;
 pub const FLAG_SET: u8 = 0x25;
 pub const FLAG_GET: u8 = 0x01;
+/// GET whose nested payload selects what to read (OBSBOT Center uses it for 0x5484).
+pub const FLAG_GET_PAYLOAD: u8 = 0x21;
 pub const SENDER_HOST: u8 = 0x0A;
 pub const FRAME_LEN: usize = 60;
 /// Max payload that fits after the 16-byte header+nested-segment prefix.

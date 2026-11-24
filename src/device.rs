@@ -7,7 +7,7 @@
 
 use crate::controls;
 use crate::error::{Error, Result};
-use crate::frame::{self, FLAG_GET, FLAG_SET};
+use crate::frame::{self, FLAG_GET, FLAG_GET_PAYLOAD, FLAG_SET};
 use crate::ioctl::VideoFd;
 use std::sync::atomic::{AtomicU16, Ordering};
 use std::time::Duration;
@@ -27,7 +27,13 @@ const RCV_UPGRADE: u8 = 0x0D;
 const CMD_DEV_STATUS: u16 = 0xA0C2; // sleep/wake
 const CMD_RECENTER: u16 = 0x00C3;
 const CMD_GIMBAL_MOVE: u16 = 0x6444; // move-to-angle, 3x f32 motor degrees
-const CMD_TRACK_SPEED: u16 = 0x0CC4; // payload [0]=standard [2]=sport
+
+// AI parameters (receiver 0x04): SET 0x5444 [u32 0, u32 param, u32 value], GET 0x5484
+// [u32 0, u32 param] -> u32 value. From the OBSBOT Center 2.0.16 capture on a Tiny 3 Lite.
+const CMD_AI_PARAM_SET: u16 = 0x5444;
+const CMD_AI_PARAM_GET: u16 = 0x5484;
+const AI_PARAM_TRACK_SPEED: u8 = 5;
+const AI_PARAM_QUERY_TRACK_SPEED: [u8; 8] = [0, 0, 0, 0, AI_PARAM_TRACK_SPEED, 0, 0, 0];
 const CMD_GET_SN: u16 = 0x18C8;
 const CMD_GET_UUID: u16 = 0x1808;
 
@@ -44,7 +50,6 @@ const ST_HDR: usize = 0x06;
 const ST_AUTO_SLEEP: usize = 0x0a;
 const ST_AI_CATEGORY: usize = 0x18;
 const ST_AI_SUBMODE: usize = 0x1c;
-const ST_TRACK_SPEED: usize = 0x21;
 
 /// AI tracking mode. The wire encoding is `[0x16, 0x02, category, submode]`.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -129,6 +134,61 @@ impl TrackMode {
     }
 }
 
+/// AI tracking speed, the three levels OBSBOT Center offers (AI parameter 5).
+///
+/// Not the Tiny 2's 0x0CC4 frame: that one is accepted by a Tiny 3 Lite and does nothing.
+/// The firmware also takes 1 (between slow and standard); Center never sends it.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum TrackSpeed {
+    Slow,
+    Standard,
+    Fast,
+}
+
+impl TrackSpeed {
+    // Not `FromStr`, like `TrackMode::from_str`: unknown is a plain `None`.
+    #[allow(clippy::should_implement_trait)]
+    pub fn from_str(s: &str) -> Option<TrackSpeed> {
+        Some(match s {
+            "slow" => TrackSpeed::Slow,
+            "standard" | "std" | "normal" => TrackSpeed::Standard,
+            "fast" | "sport" => TrackSpeed::Fast,
+            _ => return None,
+        })
+    }
+
+    /// Value of AI parameter 5 on the wire.
+    pub fn wire(self) -> u32 {
+        match self {
+            TrackSpeed::Slow => 0,
+            TrackSpeed::Standard => 2,
+            TrackSpeed::Fast => 3,
+        }
+    }
+
+    pub fn from_wire(v: u32) -> Option<TrackSpeed> {
+        [TrackSpeed::Slow, TrackSpeed::Standard, TrackSpeed::Fast]
+            .into_iter()
+            .find(|s| s.wire() == v)
+    }
+
+    pub fn label(self) -> &'static str {
+        match self {
+            TrackSpeed::Slow => "slow",
+            TrackSpeed::Standard => "standard",
+            TrackSpeed::Fast => "fast",
+        }
+    }
+}
+
+/// Payload of the 0x5444 SET for the tracking speed: `[u32 0, u32 5, u32 level]`.
+fn track_speed_payload(speed: TrackSpeed) -> [u8; 12] {
+    let mut p = [0u8; 12];
+    p[4] = AI_PARAM_TRACK_SPEED;
+    p[8..12].copy_from_slice(&speed.wire().to_le_bytes());
+    p
+}
+
 /// Decoded snapshot of the camera's vendor status block plus key UVC controls.
 #[derive(Debug, Clone)]
 pub struct Status {
@@ -137,7 +197,8 @@ pub struct Status {
     pub auto_sleep_seconds: u16,
     pub hdr: bool,
     pub tracking: TrackMode,
-    pub tracking_sport: bool,
+    /// AI parameter 5 as read from the camera; None if it did not answer the query.
+    pub tracking_speed: Option<u32>,
     pub auto_wb: bool,
     pub wb_temp: i32,
     pub pan_deg: f64,
@@ -207,8 +268,24 @@ impl Device {
     /// match. The mailbox retains the previous reply, so matching both is
     /// required; latency exceeds a fixed sleep, so we poll.
     fn transact_get(&self, receiver: u8, cmd: u16, what: &'static str) -> Result<frame::Reply> {
+        self.transact_get_with(receiver, cmd, &[], what)
+    }
+
+    /// As [`Self::transact_get`], with a nested payload selecting what to read (flags 0x21).
+    fn transact_get_with(
+        &self,
+        receiver: u8,
+        cmd: u16,
+        payload: &[u8],
+        what: &'static str,
+    ) -> Result<frame::Reply> {
         let seq = next_seq();
-        let f = frame::build(FLAG_GET, seq, receiver, cmd, &[]);
+        let flags = if payload.is_empty() {
+            FLAG_GET
+        } else {
+            FLAG_GET_PAYLOAD
+        };
+        let f = frame::build(flags, seq, receiver, cmd, payload);
         self.fd.xu_set(XU_UNIT, SEL_CMD, &f)?;
         for _ in 0..12 {
             std::thread::sleep(Duration::from_millis(50));
@@ -298,11 +375,25 @@ impl Device {
         )
     }
 
-    /// Set tracking speed. EXPERIMENTAL on Tiny 3 (frame from Tiny 2 capture).
-    /// `sport` = fast; otherwise standard.
-    pub fn set_track_speed(&self, sport: bool) -> Result<()> {
-        let v: u8 = if sport { 0x02 } else { 0x00 };
-        self.send_set(RCV_AI, CMD_TRACK_SPEED, &[v])
+    /// Set the AI tracking speed (AI parameter 5), as OBSBOT Center does. Verified on a
+    /// Tiny 3 Lite: fast removes the gimbal's lag behind the subject.
+    pub fn set_track_speed(&self, speed: TrackSpeed) -> Result<()> {
+        self.send_set(RCV_AI, CMD_AI_PARAM_SET, &track_speed_payload(speed))
+    }
+
+    /// Read the AI tracking speed (AI parameter 5): the raw value, which may be one
+    /// [`TrackSpeed::from_wire`] does not name.
+    pub fn track_speed(&self) -> Result<u32> {
+        let r = self.transact_get_with(
+            RCV_AI,
+            CMD_AI_PARAM_GET,
+            &AI_PARAM_QUERY_TRACK_SPEED,
+            "tracking speed",
+        )?;
+        match r.payload.get(..4) {
+            Some(b) => Ok(u32::from_le_bytes([b[0], b[1], b[2], b[3]])),
+            None => Err(Error::NoReply("tracking speed")),
+        }
     }
 
     // --- gimbal ---
@@ -456,7 +547,7 @@ impl Device {
             auto_sleep_seconds: decode_auto_sleep(&s),
             hdr: s[ST_HDR] != 0,
             tracking: TrackMode::from_status(s[ST_AI_CATEGORY], s[ST_AI_SUBMODE]),
-            tracking_sport: s[ST_TRACK_SPEED] == 2,
+            tracking_speed: self.track_speed().ok(),
             auto_wb,
             wb_temp,
             pan_deg: pan as f64 / controls::ASEC_PER_DEG,
@@ -488,5 +579,85 @@ mod tests {
         assert_eq!(decode_auto_sleep(&status), 600);
         status[ST_AUTO_SLEEP..ST_AUTO_SLEEP + 2].fill(0);
         assert_eq!(decode_auto_sleep(&status), 0);
+    }
+
+    fn hex(s: &str) -> Vec<u8> {
+        (0..s.len())
+            .step_by(2)
+            .map(|i| u8::from_str_radix(&s[i..i + 2], 16).unwrap())
+            .collect()
+    }
+
+    #[test]
+    fn track_speed_set_frames_match_obsbot_center_capture() {
+        // OBSBOT Center 2.0.16 on a Tiny 3 Lite (FW 6.5.8.14), Tracking Speed Slow /
+        // Standard / Fast: SET_CUR on XU selector 0x02, AI parameter 5 via 0x5444.
+        // Header (12) + nested segment (4) + payload (12) = 28 bytes, rest zero.
+        for (seq, speed, expect) in [
+            (
+                0x0592,
+                TrackSpeed::Slow,
+                "aa2592050c00527c0a0444540c008435000000000500000000000000",
+            ),
+            (
+                0x059c,
+                TrackSpeed::Standard,
+                "aa259c050c0033890a0444540c00858d000000000500000002000000",
+            ),
+            (
+                0x05a6,
+                TrackSpeed::Fast,
+                "aa25a6050c0013560a0444540c008471000000000500000003000000",
+            ),
+        ] {
+            let f = frame::build(
+                FLAG_SET,
+                seq,
+                RCV_AI,
+                CMD_AI_PARAM_SET,
+                &track_speed_payload(speed),
+            );
+            assert_eq!(&f[..28], &hex(expect)[..], "{speed:?}");
+            assert!(f[28..].iter().all(|&b| b == 0), "tail must be zero-padded");
+        }
+    }
+
+    #[test]
+    fn track_speed_query_frame_matches_obsbot_center_capture() {
+        // OBSBOT Center polling AI parameter 5: flags 0x21 (GET with payload), 0x5484 [0, 5].
+        let f = frame::build(
+            FLAG_GET_PAYLOAD,
+            0x0020,
+            RCV_AI,
+            CMD_AI_PARAM_GET,
+            &AI_PARAM_QUERY_TRACK_SPEED,
+        );
+        assert_eq!(
+            &f[..24],
+            &hex("aa2120000c008ec10a04845408007aee0000000005000000")[..]
+        );
+        assert!(f[24..].iter().all(|&b| b == 0), "tail must be zero-padded");
+    }
+
+    #[test]
+    fn track_speed_names_and_wire_values() {
+        for (name, speed, wire) in [
+            ("slow", TrackSpeed::Slow, 0),
+            ("standard", TrackSpeed::Standard, 2),
+            ("std", TrackSpeed::Standard, 2),
+            ("normal", TrackSpeed::Standard, 2),
+            ("fast", TrackSpeed::Fast, 3),
+            ("sport", TrackSpeed::Fast, 3),
+        ] {
+            assert_eq!(TrackSpeed::from_str(name), Some(speed), "{name}");
+            assert_eq!(speed.wire(), wire);
+            assert_eq!(TrackSpeed::from_wire(wire), Some(speed));
+        }
+        assert_eq!(
+            TrackSpeed::from_wire(1),
+            None,
+            "1 is not one of OBSBOT Center's levels"
+        );
+        assert_eq!(TrackSpeed::from_str("turbo"), None);
     }
 }

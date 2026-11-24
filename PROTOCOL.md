@@ -104,6 +104,13 @@ never by a reply.
 | Sleep | `0x25` | `0xA0C2` | `0x02` | `01 00 00 00` | ✅ **LED off + gimbal parks** (physically verified) |
 | Wake | `0x25` | `0xA0C2` | `0x02` | `00 00 00 00` | ✅ **LED on + gimbal lifts** (physically verified) |
 | Gimbal recenter | `0x25` | `0x00C3` | `0x03` | `00 00 00 00 00 00` | ✅ centered (frame-verified) |
+| Tracking speed (AI parameter 5) | `0x25` | `0x5444` | `0x04` | u32 `0`, u32 `5`, u32 level: `0` slow / `2` standard / `3` fast | ✅ byte-identical to OBSBOT Center 2.0.16; read back below; fast removes the gimbal's lag |
+| Read AI parameter | `0x21` | `0x5484` | `0x04` | u32 `0`, u32 param → reply payload u32 value | ✅ parameter 5 reads back each level |
+
+Flags `0x21` = a GET with a nested payload (here: which AI parameter). OBSBOT Center
+also sends `0x5444 [0, 4, 0]` before each speed change; parameter 4 reads `0` on this
+unit, so the speed alone is enough. The firmware accepts level `1` too (between slow and
+standard), which Center does not offer.
 
 Byte order note: `cmd` bytes on the wire are little-endian, e.g. sleep = `C2 A0`.
 
@@ -115,7 +122,7 @@ against this camera — treat as unverified:
 | Feature | flags | cmd | receiver | payload |
 |---|---|---|---|---|
 | Gimbal move-to-angle | `0x25` | `0x6444` | `0x04` | roll, pitch, yaw — 3× float32 LE (motor degrees) |
-| Tracking speed | `0x25` | `0x0CC4` | `0x04` | `00` standard / `02` sport |
+| Tracking speed (Tiny 2) | `0x25` | `0x0CC4` | `0x04` | `00` standard / `02` sport — accepted by a Tiny 3 Lite, **no effect**; replaced by AI parameter 5 above |
 
 Absolute pan/tilt via the standard UVC controls (`t3ctl pan`/`tilt`) is the
 verified path for positioning; `gimbal_move` is kept only as a documented
@@ -189,7 +196,7 @@ Live blob observed: `2e0100020000000100 01 78 0000 01 01 …`. Decoded offsets
 | `0x06` | HDR (bool) | ✅ reacts to the HDR TLV |
 | `0x18` | AI mode enable | ✅ `00` idle → `02` when human-tracking on |
 | `0x1c` | AI framing | ✅ tracks the submode |
-| `0x21` | tracking speed (0=std, 2=sport) | ⚠️ not exercised — `set_track_speed` is experimental |
+| `0x21` | status-light (LED) brightness, not tracking speed | ✅ follows the LED brightness setting (default 3); the speed is AI parameter 5 (`0x5484`) |
 
 **Reading the status block does not wake the camera.** It is a control GET, not
 a stream, so it can be read on a *sleeping* camera and leaves it asleep
